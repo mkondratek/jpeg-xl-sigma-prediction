@@ -39,6 +39,7 @@
 #include "lib/jxl/color_management.h"
 #include "lib/jxl/common.h"
 #include "lib/jxl/compressed_dc.h"
+#include "lib/jxl/dct-inl.h"
 #include "lib/jxl/dct_util.h"
 #include "lib/jxl/enc_adaptive_quantization.h"
 #include "lib/jxl/enc_ans.h"
@@ -721,8 +722,10 @@ class LossyFrameEncoder {
     dc_counts[1].resize(2048);
     dc_counts[2].resize(2048);
     size_t total_dc[3] = {};
-    int32_t* JXL_RESTRICT previous_row_predictions = new int32_t[64 * kGroupDimInBlocks];
-    int32_t* JXL_RESTRICT current_row_predictions = new int32_t[64 * kGroupDimInBlocks];
+    int32_t* JXL_RESTRICT previous_row_predictions =
+        new int32_t[64 * kGroupDimInBlocks];
+    int32_t* JXL_RESTRICT current_row_predictions =
+        new int32_t[64 * kGroupDimInBlocks];
     for (size_t c : {1, 0, 2}) {
       if (jpeg_data.components.size() == 1 && c != 1) {
         enc_state_->coeffs[0]->ZeroFillPlane(c);
@@ -743,7 +746,8 @@ class LossyFrameEncoder {
         size_t offset = 0;
         int32_t* JXL_RESTRICT ac =
             enc_state_->coeffs[0]->PlaneRow(c, group_index, 0).ptr32;
-        const size_t row_size = std::min(xsize_blocks, (gx + 1) * kGroupDimInBlocks) -
+        const size_t row_size =
+            std::min(xsize_blocks, (gx + 1) * kGroupDimInBlocks) -
             gx * kGroupDimInBlocks;
         for (size_t by = gy * kGroupDimInBlocks;
              by < ysize_blocks && by < (gy + 1) * kGroupDimInBlocks; ++by) {
@@ -799,8 +803,7 @@ class LossyFrameEncoder {
 //#define DEBUG
 #ifdef DEBUG
             if (c == 1) {
-              std::cout << "by=" << by << " block (c=" << c
-                        << ", values):\n";
+              std::cout << "by=" << by << " block (c=" << c << ", values):\n";
               for (size_t y = 0; y < 8; y++) {
                 for (size_t x = 0; x < 8; x++) {
                   std::cout << std::setw(8) << ac[offset + y * 8 + x];
@@ -811,14 +814,48 @@ class LossyFrameEncoder {
 #endif
 
             int32_t* JXL_RESTRICT top_ac = by > gy * kGroupDimInBlocks
-                                           ? ac + offset - row_size * 64
-                                           : nullptr;
-            int32_t* JXL_RESTRICT left_ac = bx > gx * kGroupDimInBlocks
-                                            ? ac + offset - 64
-                                            : nullptr;
+                                               ? ac + offset - row_size * 64
+                                               : nullptr;
+            int32_t* JXL_RESTRICT left_ac =
+                bx > gx * kGroupDimInBlocks ? ac + offset - 64 : nullptr;
             int32_t* JXL_RESTRICT predictions =
                 current_row_predictions + (bx - gx * kGroupDimInBlocks) * 64;
-            individual_project::predict(predictions, top_ac, left_ac, c, false, false);
+            individual_project::predict(predictions, top_ac, left_ac, c, false,
+                                        false);
+
+            if (top_ac != nullptr && left_ac != nullptr) {
+
+              float top_ac_for_dct[8] = {
+                  float(top_ac[56]),
+                  float(top_ac[57]),
+                  float(top_ac[58]),
+                  float(top_ac[59]),
+                  float(top_ac[60]),
+                  float(top_ac[61]),
+                  float(top_ac[62]),
+                  float(top_ac[63])
+              };
+
+              float left_ac_for_dct[8] = {
+                  float(left_ac[7]),
+                  float(left_ac[15]),
+                  float(left_ac[23]),
+                  float(left_ac[31]),
+                  float(left_ac[39]),
+                  float(left_ac[47]),
+                  float(left_ac[55]),
+                  float(left_ac[63])
+              };
+
+              HWY_NAMESPACE::DCT1DImpl<8, sizeof(float)>dct;
+              HWY_NAMESPACE::IDCT1DImpl<8, sizeof(float)>idct;
+              ComputeDCT(top_ac_for_dct);
+              int a = 2 + 3;
+//              dct(top_ac_for_dct);
+//              idct(top_ac_for_dct, sizeof(float), top_ac_for_dct, sizeof(float));
+//              dct(left_ac_for_dct);
+            }
+
             offset += 64;
           }
           if (by > gy * kGroupDimInBlocks) {
@@ -930,6 +967,15 @@ class LossyFrameEncoder {
               tokenize_group, "TokenizeGroup");
     *frame_header = shared.frame_header;
     return true;
+  }
+
+  void ComputeDCT(float block[8]) {
+    HWY_ALIGN float tmp_block[8];
+    HWY_ALIGN float scratch_space[8];
+    HWY_NAMESPACE::ComputeTransposedScaledDCT<8>()(HWY_NAMESPACE::DCTFrom(block, 8), tmp_block, scratch_space);
+
+    // Untranspose.
+    HWY_NAMESPACE::Transpose<8, 1>::Run(HWY_NAMESPACE::DCTFrom(tmp_block, 1), HWY_NAMESPACE::DCTTo(block, 8));
   }
 
   Status EncodeGlobalDCInfo(const FrameHeader& frame_header,
