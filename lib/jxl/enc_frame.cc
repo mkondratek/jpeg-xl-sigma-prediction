@@ -11,11 +11,15 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cmath>
+#include <iomanip>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <vector>
 
+#include "ac_jpeg_predict.h"
 #include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/ans_params.h"
@@ -717,6 +721,8 @@ class LossyFrameEncoder {
     dc_counts[1].resize(2048);
     dc_counts[2].resize(2048);
     size_t total_dc[3] = {};
+    int32_t* JXL_RESTRICT previous_row_predictions = new int32_t[64 * kGroupDimInBlocks];
+    int32_t* JXL_RESTRICT current_row_predictions = new int32_t[64 * kGroupDimInBlocks];
     for (size_t c : {1, 0, 2}) {
       if (jpeg_data.components.size() == 1 && c != 1) {
         enc_state_->coeffs[0]->ZeroFillPlane(c);
@@ -731,11 +737,14 @@ class LossyFrameEncoder {
       ImageSB& map = (c == 0 ? shared.cmap.ytox_map : shared.cmap.ytob_map);
       for (size_t group_index = 0; group_index < frame_dim.num_groups;
            group_index++) {
+        memset(current_row_predictions, 0, 64 * sizeof(int32_t));
         const size_t gx = group_index % frame_dim.xsize_groups;
         const size_t gy = group_index / frame_dim.xsize_groups;
         size_t offset = 0;
         int32_t* JXL_RESTRICT ac =
             enc_state_->coeffs[0]->PlaneRow(c, group_index, 0).ptr32;
+        const size_t row_size = std::min(xsize_blocks, (gx + 1) * kGroupDimInBlocks) -
+            gx * kGroupDimInBlocks;
         for (size_t by = gy * kGroupDimInBlocks;
              by < ysize_blocks && by < (gy + 1) * kGroupDimInBlocks; ++by) {
           if ((by >> vshift) << vshift != by) continue;
@@ -786,11 +795,45 @@ class LossyFrameEncoder {
                 }
               }
             }
+
+//#define DEBUG
+#ifdef DEBUG
+            if (c == 1) {
+              std::cout << "by=" << by << " block (c=" << c
+                        << ", values):\n";
+              for (size_t y = 0; y < 8; y++) {
+                for (size_t x = 0; x < 8; x++) {
+                  std::cout << std::setw(8) << ac[offset + y * 8 + x];
+                  if (x == 7) std::cout << std::endl;
+                }
+              }
+            }
+#endif
+
+            int32_t* JXL_RESTRICT top_ac = by > gy * kGroupDimInBlocks
+                                           ? ac + offset - row_size * 64
+                                           : nullptr;
+            int32_t* JXL_RESTRICT left_ac = bx > gx * kGroupDimInBlocks
+                                            ? ac + offset - 64
+                                            : nullptr;
+            int32_t* JXL_RESTRICT predictions =
+                current_row_predictions + (bx - gx * kGroupDimInBlocks) * 64;
+            individual_project::predict(predictions, top_ac, left_ac, c, false, false);
             offset += 64;
           }
+          if (by > gy * kGroupDimInBlocks) {
+            individual_project::applyPrediction(ac + offset - 2 * row_size * 64,
+                                                previous_row_predictions,
+                                                row_size);
+          }
+          std::swap(current_row_predictions, previous_row_predictions);
         }
+        individual_project::applyPrediction(ac + offset - row_size * 64,
+                                            previous_row_predictions, row_size);
       }
     }
+    delete[] previous_row_predictions;
+    delete[] current_row_predictions;
 
     auto& dct = enc_state_->shared.block_ctx_map.dc_thresholds;
     auto& num_dc_ctxs = enc_state_->shared.block_ctx_map.num_dc_ctxs;

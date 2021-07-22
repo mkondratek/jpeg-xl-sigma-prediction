@@ -346,7 +346,7 @@ struct PassesDecoderState {
 // Temp images required for decoding a single group. Reduces memory allocations
 // for large images because we only initialize min(#threads, #groups) instances.
 struct GroupDecCache {
-  void InitOnce(size_t num_passes, size_t used_acs) {
+  void InitOnce(size_t num_passes, size_t used_acs, size_t  xsize_blocks,  ACType type) {
     PROFILER_FUNC;
 
     for (size_t i = 0; i < num_passes; i++) {
@@ -358,6 +358,23 @@ struct GroupDecCache {
         num_nzeroes[i] = Image3I(kGroupDimInBlocks, kGroupDimInBlocks);
       }
     }
+
+    if (type == ACType::k16) {
+      dec_group_qrow16 =
+          (int16_t*)aligned_alloc(hwy::kMaxVectorSize,
+                                  sizeof(int16_t) * 3 * AcStrategy::kMaxCoeffArea * xsize_blocks);
+      prev_dec_group_qrow16 =
+          (int16_t*)aligned_alloc(hwy::kMaxVectorSize,
+                                  sizeof(int16_t) * 3 * AcStrategy::kMaxCoeffArea * xsize_blocks);
+    } else {
+      dec_group_qrow =
+          (int32_t*)aligned_alloc(hwy::kMaxVectorSize,
+                                  sizeof(int32_t) * 3 * AcStrategy::kMaxCoeffArea * xsize_blocks);
+      prev_dec_group_qrow =
+          (int32_t*)aligned_alloc(hwy::kMaxVectorSize,
+                                  sizeof(int32_t) * 3 * AcStrategy::kMaxCoeffArea * xsize_blocks);
+    }
+
     size_t max_block_area = 0;
 
     for (uint8_t o = 0; o < AcStrategy::kNumValidStrategies; ++o) {
@@ -377,6 +394,16 @@ struct GroupDecCache {
       int32_memory_ = hwy::AllocateAligned<int32_t>(max_block_area_ * 3);
       int16_memory_ = hwy::AllocateAligned<int16_t>(max_block_area_ * 3);
     }
+  }
+
+  void DeInit( ACType type) {
+    if (type == ACType::k16) {
+      free(dec_group_qrow16);
+      free(prev_dec_group_qrow16);
+    } else {
+      free(dec_group_qrow);
+      free(prev_dec_group_qrow);
+    }
 
     dec_group_block = float_memory_.get();
     scratch_space = dec_group_block + max_block_area_ * 3;
@@ -388,6 +415,11 @@ struct GroupDecCache {
   float* dec_group_block;
   int32_t* dec_group_qblock;
   int16_t* dec_group_qblock16;
+
+  HWY_ALIGN_MAX int32_t* dec_group_qrow;
+  HWY_ALIGN_MAX int32_t* prev_dec_group_qrow;
+  HWY_ALIGN_MAX int16_t* dec_group_qrow16;
+  HWY_ALIGN_MAX int16_t* prev_dec_group_qrow16;
 
   // For TransformToPixels.
   float* scratch_space;

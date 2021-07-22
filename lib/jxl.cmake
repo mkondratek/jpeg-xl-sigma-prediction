@@ -187,6 +187,8 @@ set(JPEGXL_INTERNAL_SOURCES_DEC
   jxl/transfer_functions-inl.h
   jxl/transpose-inl.h
   jxl/xorshift128plus-inl.h
+  jxl/ac_jpeg_predict.h
+  jxl/ac_jpeg_predict.cc
 )
 
 # List of source files only needed by the encoder or by tools (including
