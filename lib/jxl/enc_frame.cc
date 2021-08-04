@@ -847,13 +847,25 @@ class LossyFrameEncoder {
                   float(left_ac[63])
               };
 
-              HWY_NAMESPACE::DCT1DImpl<8, sizeof(float)>dct;
-              HWY_NAMESPACE::IDCT1DImpl<8, sizeof(float)>idct;
-              ComputeDCT(top_ac_for_dct);
+              float test_acs_in[64] = {10,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0
+              };
+              float test_acs_out[64] = {0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0,
+                                       0,0,0,0,0,0,0,0};
+              DCT1D<8,1>(test_acs_in, test_acs_out);
               int a = 2 + 3;
-//              dct(top_ac_for_dct);
-//              idct(top_ac_for_dct, sizeof(float), top_ac_for_dct, sizeof(float));
-//              dct(left_ac_for_dct);
             }
 
             offset += 64;
@@ -969,13 +981,27 @@ class LossyFrameEncoder {
     return true;
   }
 
-  void ComputeDCT(float block[8]) {
-    HWY_ALIGN float tmp_block[8];
-    HWY_ALIGN float scratch_space[8];
-    HWY_NAMESPACE::ComputeTransposedScaledDCT<8>()(HWY_NAMESPACE::DCTFrom(block, 8), tmp_block, scratch_space);
+  static inline float alpha(int u) { return u == 0 ? 0.7071067811865475 : 1.0; }
 
-    // Untranspose.
-    HWY_NAMESPACE::Transpose<8, 1>::Run(HWY_NAMESPACE::DCTFrom(tmp_block, 1), HWY_NAMESPACE::DCTTo(block, 8));
+  // N-DCT on M columns, divided by sqrt(N). Matches the definition in the spec.
+  template <size_t N, size_t M>
+  void DCT1D(float block[N * M], float out[N * M]) {
+    std::vector<float> matrix(N * N);
+//    const float scale = std::sqrt(2.0) / N; todo: strange scale, actual result divided by 2*sqrt(2)=sqrt(8)
+    const float scale = 0.5; // todo: working value
+    for (size_t y = 0; y < N; y++) {
+      for (size_t u = 0; u < N; u++) {
+        matrix[N * u + y] = alpha(u) * cos((y + 0.5) * u * Pi(1.0 / N)) * scale;
+      }
+    }
+    for (size_t x = 0; x < M; x++) {
+      for (size_t u = 0; u < N; u++) {
+        out[M * u + x] = 0;
+        for (size_t y = 0; y < N; y++) {
+          out[M * u + x] += matrix[N * u + y] * block[M * y + x];
+        }
+      }
+    }
   }
 
   Status EncodeGlobalDCInfo(const FrameHeader& frame_header,
