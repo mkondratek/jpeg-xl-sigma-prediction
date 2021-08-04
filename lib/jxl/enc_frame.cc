@@ -847,23 +847,8 @@ class LossyFrameEncoder {
                   float(left_ac[63])
               };
 
-              float test_acs_in[64] = {10,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0,
-                                      0,0,0,0,0,0,0,0
-              };
-              float test_acs_out[64] = {0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0,
-                                       0,0,0,0,0,0,0,0};
+              float test_acs_in[8] = {10,0,0,0,0,0,0,0};
+              float test_acs_out[8] = {0,0,0,0,0,0,0,0};
               DCT1D<8,1>(test_acs_in, test_acs_out);
               int a = 2 + 3;
             }
@@ -983,7 +968,7 @@ class LossyFrameEncoder {
 
   static inline float alpha(int u) { return u == 0 ? 0.7071067811865475 : 1.0; }
 
-  // N-DCT on M columns, divided by sqrt(N). Matches the definition in the spec.
+  // N-DCT on M columns, NOT divided by sqrt(N). Matches the definition in the spec.
   template <size_t N, size_t M>
   void DCT1D(float block[N * M], float out[N * M]) {
     std::vector<float> matrix(N * N);
