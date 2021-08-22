@@ -1292,6 +1292,14 @@ Status EncodeFrame(const CompressParams& cparams_orig,
         &ib, &opsin, pool, modular_frame_encoder.get(), writer,
         frame_header.get()));
   }
+
+  // TODO (thomoncik): Sigma precidtion here
+  // for each DCT coefficient compute 1D DCT of neighbouring DCTs (left column, top row)
+  // concatenation of them -> 1DDCTs
+  // concatenation of individual_project::vertical_noise_evaluation and individual_project::horizontal_noise_evaluation -> w
+  // result (sigma matrix 8x8) is individual_project::beta0 + (abs(1DDCTs) * w) * individual_project::beta1
+  // we need to pass (number of coding table, value to encode) sequence (64 pairs length) to modified encoder
+
   if (cparams.ec_resampling != 1 && !cparams.already_downsampled) {
     extra_channels = &extra_channels_storage;
     for (size_t i = 0; i < ib.extra_channels().size(); i++) {
