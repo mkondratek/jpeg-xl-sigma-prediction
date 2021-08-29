@@ -198,6 +198,9 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
 
       CoefficientLayout(&cy, &cx);  // swap cx/cy to canonical order
 
+      // TODO (thomoncik): ac_rows with offset allows to preview AC coefficients
+      // find a way to get top and left blocks
+
       for (int c : {1, 0, 2}) {
         if (sbx[c] << cs.HShift(c) != bx) continue;
         if (sby[c] << cs.VShift(c) != by) continue;
