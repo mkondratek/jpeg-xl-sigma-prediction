@@ -157,6 +157,7 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
                           std::vector<Token>* JXL_RESTRICT output,
                           const ImageB& qdc, const ImageI& qf,
                           const BlockCtxMap& block_ctx_map) {
+  // TAKE A LOOK HERE!!!!oneoneoen1
   const size_t xsize_blocks = rect.xsize();
   const size_t ysize_blocks = rect.ysize();
 
