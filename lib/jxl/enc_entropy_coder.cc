@@ -206,6 +206,11 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         if (sby[c] << cs.VShift(c) != by) continue;
         const int32_t* JXL_RESTRICT block = ac_rows[c] + offset[c];
 
+        // ac_rows[c] + (size * ((by * (cx + 1)) + bx)) - current block
+        // ac_rows[c] + (size * (((by - 1) * (cx + 1)) + bx)) - top block
+        // ac_rows[c] + (size * ((by * (cx + 1)) + (bx - 1))) - left block
+        // combine it with order array to get coefficients in the right order
+
         int32_t nzeros =
             (covered_blocks == 1)
                 ? NumNonZero8x8ExceptDC(block, row_nzeros[c] + sbx[c])
