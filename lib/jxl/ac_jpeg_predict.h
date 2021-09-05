@@ -36,10 +36,12 @@ const float beta1[8][8] = {{0.820167, 0.173436, 0.065358, 0.0285933, 0.030308,
                            {0.12602, 0.0678936, 0.05384, 0.0453382, 0.0385935,
                             0.0341108, 0.0282731, 0.0356609}};
 
-const float vertical_noise_evaluation[8] = {
-    0., 0.0721139, 0.134336, 0.186764, 0.258038, 0.314061, 0.384939, 0.374337};
-const float horizontal_noise_evaluation[8] = {
-    0., 0.0721139, 0.134336, 0.186764, 0.258038, 0.314061, 0.384939, 0.374337};
+const float vertical_horizontal_noise_evaluation[16] =
+    {0., 0.0721139, 0.134336, 0.186764, 0.258038, 0.314061, 0.384939, 0.374337,
+     0., 0.0721139, 0.134336, 0.186764, 0.258038, 0.314061, 0.384939, 0.374337};
+
+const float* vertical_noise_evaluation = vertical_horizontal_noise_evaluation;
+const float* horizontal_noise_evaluation = vertical_horizontal_noise_evaluation + 8;
 
 template<typename T>
 void predict(T* ac, const T* top_ac, const T* left_ac, int c,
