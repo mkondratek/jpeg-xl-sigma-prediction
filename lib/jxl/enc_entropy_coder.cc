@@ -223,12 +223,11 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
 
       CoefficientLayout(&cy, &cx);  // swap cx/cy to canonical order
 
-      // TODO (thomoncik): ac_rows with offset allows to preview AC coefficients
-      // find a way to get top and left blocks
-
       for (int c : {1, 0, 2}) {
         if (sbx[c] << cs.HShift(c) != bx) continue;
         if (sby[c] << cs.VShift(c) != by) continue;
+
+        // TODO (thomoncik): migrate to image.h functions of operating on cropped image
         const int32_t* JXL_RESTRICT block = ac_rows[c] + offset[c];
         const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * (((by - 1) * (cx + 1)) + bx));
         const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * ((by * (cx + 1)) + (bx - 1)));
