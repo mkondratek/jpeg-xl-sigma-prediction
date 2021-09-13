@@ -9,6 +9,8 @@
 // Library to decode the ANS population counts from the bit-stream and build a
 // decoding table from them.
 
+#include <array>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -184,7 +186,46 @@ class ANSSymbolReader {
       if (dist < 1) dist = 1;
       special_distances_[i] = dist;
     }
+    CreateLaplaceAliasTables(0.25, 0.5);
   }
+
+  /////////////////////////////// LAPLACE ATTEMPT ///////////////////////
+
+  JXL_INLINE size_t ReadSymbolSigmaWithoutRefill(const uint32_t sigma_idx,
+                                                 BitReader* JXL_RESTRICT br) {
+    const uint32_t res = state_ & (ANS_TAB_SIZE - 1u);
+
+    auto const& table = sigma_alias_tables_[sigma_idx];
+    const AliasTable::Symbol symbol = AliasTable::Lookup(
+        table.data(), res, log_entry_size_, entry_size_minus_1_);
+    state_ = symbol.freq * (state_ >> ANS_LOG_TAB_SIZE) + symbol.offset;
+
+#if 1
+    // Branchless version is about equally fast on SKX.
+    const uint32_t new_state =
+        (state_ << 16u) | static_cast<uint32_t>(br->PeekFixedBits<16>());
+    const bool normalize = state_ < (1u << 16u);
+    state_ = normalize ? new_state : state_;
+    br->Consume(normalize ? 16 : 0);
+#else
+    if (JXL_UNLIKELY(state_ < (1u << 16u))) {
+      state_ = (state_ << 16u) | br->PeekFixedBits<16>();
+      br->Consume(16);
+    }
+#endif
+    const uint32_t next_res = state_ & (ANS_TAB_SIZE - 1u);
+    AliasTable::Prefetch(table.data(), next_res, log_entry_size_);
+
+    return symbol.value;
+  }
+
+  JXL_INLINE size_t ReadSymbolSigma(const size_t sigma_idx,
+                                    BitReader* JXL_RESTRICT br) {
+    br->Refill();
+    return ReadSymbolSigmaWithoutRefill(sigma_idx, br);
+  }
+
+  ///////////////////////////////////////////////////////////////////////
 
   JXL_INLINE size_t ReadSymbolANSWithoutRefill(const size_t histo_idx,
                                                BitReader* JXL_RESTRICT br) {
@@ -393,6 +434,55 @@ class ANSSymbolReader {
     }
   }
 
+  ///////////////////////////// LAPLACE - ALIAS TABLES - SIGMA LOAD //////////
+
+  void LoadSigmas(size_t token_count, std::vector<uint32_t>& sigmas,
+                  BitReader* JXL_RESTRICT br) {
+    sigmas.resize(token_count);
+    for (size_t i = 0u; i < token_count; i++) {
+      const uint32_t sigma = static_cast<uint32_t>(br->PeekBits(4u));
+      br->Consume(4u);
+      sigmas[i] = sigma;
+    }
+  }
+
+ private:
+  void CreateLaplaceAliasTables(double q, double sigma_q) {
+    for (uint32_t sigma_idx = 0; sigma_idx < sigma_alias_tables_.size();
+         sigma_idx++) {
+      const uint32_t MAX_SYMBOL = 256u;
+      const double sigma = static_cast<double>(sigma_idx) * sigma_q;
+
+      std::array<uint32_t, MAX_SYMBOL + 1> cdf;
+      cdf[0] = 0u;
+      cdf[MAX_SYMBOL] = ANS_TAB_SIZE - MAX_SYMBOL;
+      for (uint32_t i = 1u; i < MAX_SYMBOL; i++) {
+        double v = (static_cast<double>(static_cast<int>(i) -
+                                        static_cast<int>(MAX_SYMBOL / 2)) -
+                    0.5) *
+                   q;
+        double cdf_d =
+            (v <= 0.0) ? (0.5 * exp(v / sigma)) : (1.0 - 0.5 * exp(-v / sigma));
+        cdf[i] = static_cast<uint32_t>(
+            cdf_d * static_cast<double>(ANS_TAB_SIZE - MAX_SYMBOL));
+      }
+
+      std::vector<int> counts;
+      counts.resize(MAX_SYMBOL);
+      for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
+        counts[i] = static_cast<int>(1u + cdf[i + 1] - cdf[i]);
+      }
+
+      InitAliasTable(counts, ANS_TAB_SIZE, 8u,
+                     sigma_alias_tables_[sigma_idx].data());
+    }
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////
+
+ private:
+  std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 16>
+      sigma_alias_tables_ = {};  // not owned
  private:
   const AliasTable::Entry* JXL_RESTRICT alias_tables_;  // not owned
   const HuffmanDecodingData* huffman_data_;

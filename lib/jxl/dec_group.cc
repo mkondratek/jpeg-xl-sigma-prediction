@@ -21,7 +21,6 @@
 #include <iomanip>
 #include <iostream>
 
-#include "ac_jpeg_predict.h"
 #include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/aux_out.h"
@@ -382,47 +381,6 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
             // No CfL - no need to store the y block converted to integers.
             if (!cs.Is444() ||
                 (row_cmap[0][abs_tx] == 0 && row_cmap[2][abs_tx] == 0)) {
-
-              if (ac_type == ACType::k16) {
-                auto left_ac = bx > 0 ? qblock[c].ptr16 - 3 * size : nullptr;
-                auto top_ac = by > 0
-                              ? group_dec_cache->prev_dec_group_qrow16 +
-                                (3 * offsett) + (c * 64) : nullptr;
-                individual_project::predict(qblock[c].ptr16, top_ac, left_ac,
-                                            c, true, true);
-              } else {
-                auto left_ac = bx > 0 ? qblock[c].ptr32 - 3 * size : nullptr;
-                auto top_ac = by > 0 ? group_dec_cache->prev_dec_group_qrow +
-                                       (3 * offsett) + (c * 64) : nullptr;
-                individual_project::predict(qblock[c].ptr32, top_ac, left_ac,
-                                            c, true, true);
-              }
-
-//#define DEBUG
-#ifdef DEBUG
-              if (c == 1) {
-                std::cout << "by=" << by << " block (c=" << c
-                          << ", values):\n";
-                for (size_t x = 0; x < 8; x++) {
-                  for (size_t y = 0; y < 8; y++) {
-                    if (x == 0 && y == 0) {
-                      std::cout << std::setw(8)
-                                << dc_rows[c][sbx[c]] - dcoff[c];
-                    } else {
-                      if (ac_type == ACType::k16) {
-                        std::cout << std::setw(8)
-                                  << qblock[c].ptr16[y * 8 + x];
-                      } else {
-                        std::cout << std::setw(8)
-                                  << qblock[c].ptr32[y * 8 + x];
-                      }
-                    }
-                    if (y == 7) std::cout << std::endl;
-                  }
-                }
-              }
-#endif
-
               for (size_t i = 0; i < 64; i += Lanes(d)) {
                 const auto ini = Load(di, transposed_dct + i);
                 const auto ini16 = DemoteTo(di16, ini);
@@ -549,18 +507,16 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
     }
   }
 
-  const size_t histo_offset =
-      ctx_offset + block_ctx_map.ZeroDensityContextsOffset(block_ctx);
-
   // Skip LLF
   {
     PROFILER_ZONE("AcDecSkipLLF, reader");
     size_t prev = (nzeros > size / 16 ? 0 : 1);
+
+    std::vector<uint32_t> sigmas;
+    decoder->LoadSigmas(nzeros, sigmas, br);
+
     for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
-      const size_t ctx =
-          histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
-                                            log2_covered_blocks, prev);
-      const size_t u_coeff = decoder->ReadHybridUint(ctx, br, context_map);
+      const size_t u_coeff = decoder->ReadSymbolSigma(sigmas[k], br);
       // Hand-rolled version of UnpackSigned, shifting before the conversion to
       // signed integer to avoid undefined behavior of shifting negative
       // numbers.

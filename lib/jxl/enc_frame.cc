@@ -9,18 +9,12 @@
 #include <stdint.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
-#include <cassert>
 #include <cmath>
-#include <iomanip>
-#include <iostream>
 #include <limits>
 #include <numeric>
 #include <vector>
 
-#include "ac_jpeg_predict.h"
-#include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/ans_params.h"
 #include "lib/jxl/aux_out.h"
@@ -29,19 +23,14 @@
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/data_parallel.h"
 #include "lib/jxl/base/override.h"
-#include "lib/jxl/base/padded_bytes.h"
 #include "lib/jxl/base/profiler.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/chroma_from_luma.h"
-#include "lib/jxl/coeff_order.h"
 #include "lib/jxl/coeff_order_fwd.h"
 #include "lib/jxl/color_encoding_internal.h"
-#include "lib/jxl/color_management.h"
 #include "lib/jxl/common.h"
-#include "lib/jxl/compressed_dc.h"
 #include "lib/jxl/dct-inl.h"
 #include "lib/jxl/dct_util.h"
-#include "lib/jxl/enc_adaptive_quantization.h"
 #include "lib/jxl/enc_ans.h"
 #include "lib/jxl/enc_bit_writer.h"
 #include "lib/jxl/enc_cache.h"
@@ -60,14 +49,12 @@
 #include "lib/jxl/enc_xyb.h"
 #include "lib/jxl/fields.h"
 #include "lib/jxl/frame_header.h"
-#include "lib/jxl/gaborish.h"
 #include "lib/jxl/image.h"
 #include "lib/jxl/image_bundle.h"
 #include "lib/jxl/image_ops.h"
 #include "lib/jxl/loop_filter.h"
 #include "lib/jxl/quant_weights.h"
 #include "lib/jxl/quantizer.h"
-#include "lib/jxl/splines.h"
 #include "lib/jxl/toc.h"
 
 namespace jxl {
@@ -722,10 +709,6 @@ class LossyFrameEncoder {
     dc_counts[1].resize(2048);
     dc_counts[2].resize(2048);
     size_t total_dc[3] = {};
-    int32_t* JXL_RESTRICT previous_row_predictions =
-        new int32_t[64 * kGroupDimInBlocks];
-    int32_t* JXL_RESTRICT current_row_predictions =
-        new int32_t[64 * kGroupDimInBlocks];
     for (size_t c : {1, 0, 2}) {
       if (jpeg_data.components.size() == 1 && c != 1) {
         enc_state_->coeffs[0]->ZeroFillPlane(c);
@@ -740,15 +723,11 @@ class LossyFrameEncoder {
       ImageSB& map = (c == 0 ? shared.cmap.ytox_map : shared.cmap.ytob_map);
       for (size_t group_index = 0; group_index < frame_dim.num_groups;
            group_index++) {
-        memset(current_row_predictions, 0, 64 * sizeof(int32_t));
         const size_t gx = group_index % frame_dim.xsize_groups;
         const size_t gy = group_index / frame_dim.xsize_groups;
         size_t offset = 0;
         int32_t* JXL_RESTRICT ac =
             enc_state_->coeffs[0]->PlaneRow(c, group_index, 0).ptr32;
-        const size_t row_size =
-            std::min(xsize_blocks, (gx + 1) * kGroupDimInBlocks) -
-            gx * kGroupDimInBlocks;
         for (size_t by = gy * kGroupDimInBlocks;
              by < ysize_blocks && by < (gy + 1) * kGroupDimInBlocks; ++by) {
           if ((by >> vshift) << vshift != by) continue;
@@ -799,75 +778,11 @@ class LossyFrameEncoder {
                 }
               }
             }
-
-//#define DEBUG
-#ifdef DEBUG
-            if (c == 1) {
-              std::cout << "by=" << by << " block (c=" << c << ", values):\n";
-              for (size_t y = 0; y < 8; y++) {
-                for (size_t x = 0; x < 8; x++) {
-                  std::cout << std::setw(8) << ac[offset + y * 8 + x];
-                  if (x == 7) std::cout << std::endl;
-                }
-              }
-            }
-#endif
-
-            int32_t* JXL_RESTRICT top_ac = by > gy * kGroupDimInBlocks
-                                               ? ac + offset - row_size * 64
-                                               : nullptr;
-            int32_t* JXL_RESTRICT left_ac =
-                bx > gx * kGroupDimInBlocks ? ac + offset - 64 : nullptr;
-            int32_t* JXL_RESTRICT predictions =
-                current_row_predictions + (bx - gx * kGroupDimInBlocks) * 64;
-            individual_project::predict(predictions, top_ac, left_ac, c, false,
-                                        false);
-
-            if (top_ac != nullptr && left_ac != nullptr) {
-
-              float top_ac_for_dct[8] = {
-                  float(top_ac[56]),
-                  float(top_ac[57]),
-                  float(top_ac[58]),
-                  float(top_ac[59]),
-                  float(top_ac[60]),
-                  float(top_ac[61]),
-                  float(top_ac[62]),
-                  float(top_ac[63])
-              };
-
-              float left_ac_for_dct[8] = {
-                  float(left_ac[7]),
-                  float(left_ac[15]),
-                  float(left_ac[23]),
-                  float(left_ac[31]),
-                  float(left_ac[39]),
-                  float(left_ac[47]),
-                  float(left_ac[55]),
-                  float(left_ac[63])
-              };
-
-              float test_acs_in[8] = {10,0,0,0,0,0,0,0};
-              float test_acs_out[8] = {0,0,0,0,0,0,0,0};
-              DCT1D<8,1>(test_acs_in, test_acs_out);
-              int a = 2 + 3;
-            }
-
             offset += 64;
           }
-          if (by > gy * kGroupDimInBlocks) {
-            individual_project::applyPrediction(ac + offset - 2 * row_size * 64,
-                                                previous_row_predictions,
-                                                row_size);
-          }
-          std::swap(current_row_predictions, previous_row_predictions);
         }
-        individual_project::applyPrediction(ac + offset - row_size * 64,
-                                            previous_row_predictions, row_size);
       }
     }
-    delete[] previous_row_predictions;
-    delete[] current_row_predictions;
 
     auto& dct = enc_state_->shared.block_ctx_map.dc_thresholds;
     auto& num_dc_ctxs = enc_state_->shared.block_ctx_map.num_dc_ctxs;
@@ -964,29 +879,6 @@ class LossyFrameEncoder {
               tokenize_group, "TokenizeGroup");
     *frame_header = shared.frame_header;
     return true;
-  }
-
-  static inline float alpha(int u) { return u == 0 ? 0.7071067811865475 : 1.0; }
-
-  // N-DCT on M columns, NOT divided by sqrt(N). Matches the definition in the spec.
-  template <size_t N, size_t M>
-  void DCT1D(float block[N * M], float out[N * M]) {
-    std::vector<float> matrix(N * N);
-//    const float scale = std::sqrt(2.0) / N; todo: strange scale, actual result divided by 2*sqrt(2)=sqrt(8)
-    const float scale = 0.5; // todo: working value
-    for (size_t y = 0; y < N; y++) {
-      for (size_t u = 0; u < N; u++) {
-        matrix[N * u + y] = alpha(u) * cos((y + 0.5) * u * Pi(1.0 / N)) * scale;
-      }
-    }
-    for (size_t x = 0; x < M; x++) {
-      for (size_t u = 0; u < N; u++) {
-        out[M * u + x] = 0;
-        for (size_t y = 0; y < N; y++) {
-          out[M * u + x] += matrix[N * u + y] * block[M * y + x];
-        }
-      }
-    }
   }
 
   Status EncodeGlobalDCInfo(const FrameHeader& frame_header,

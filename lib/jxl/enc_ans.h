@@ -137,6 +137,82 @@ extern template void EncodeUintConfigs(const std::vector<HybridUintConfig>&,
 // Globally set the option to create fuzzer-friendly ANS streams. Negatively
 // impacts compression. Not thread-safe.
 void SetANSFuzzerFriendly(bool ans_fuzzer_friendly);
+
+////////////////////////////// ANS LAPLACE TABLES ////////////////////////////
+
+template <uint32_t POP_SIZE = ANS_TAB_SIZE, uint32_t SIGMA_COUNT = 16u,
+          uint32_t MAX_SYMBOL = 256u>
+class ANSLaplaceTable {
+ public:
+  ANSLaplaceTable(double q, double q_sigma) { CreateTables(q, q_sigma); }
+
+  ANSEncSymbolInfo const& get_symbol(uint32_t value, uint32_t sigma) const {
+    return m_data[sigma % SIGMA_COUNT][value % MAX_SYMBOL];
+  }
+
+  ANSEncSymbolInfo const& get_symbol(Token const& t) const {
+    return get_symbol(t.value, t.context);
+  }
+
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> const&
+  data() const {
+    return m_data;
+  }
+
+ private:
+  void CreateTables(double q, double q_sigma) {
+    for (uint32_t i = 0u; i < SIGMA_COUNT; i++) {
+      std::array<uint32_t, MAX_SYMBOL> freqs;
+      CalculateFreqs(static_cast<double>(i + 1) * q_sigma, q, freqs);
+      CreateFreqTable(i, freqs);
+    }
+  }
+  void CalculateFreqs(double sigma, double q,
+                      std::array<uint32_t, MAX_SYMBOL>& freqs) {
+    std::array<uint32_t, MAX_SYMBOL + 1> cdf;
+    cdf[0] = 0u;
+    cdf[MAX_SYMBOL] = POP_SIZE - MAX_SYMBOL;
+    for (uint32_t i = 1u; i < MAX_SYMBOL; i++) {
+      double v = (static_cast<double>(static_cast<int>(i) -static_cast<int>(MAX_SYMBOL / 2)) -0.5) *q;
+      double cdf_d =(v <= 0.0) ? (0.5 * exp(v / sigma)) : (1.0 - 0.5 * exp(-v / sigma));
+      cdf[i] = static_cast<uint32_t>(cdf_d * static_cast<double>(POP_SIZE - MAX_SYMBOL));
+    }
+  }
+
+  void CreateFreqTable(uint32_t ix,std::array<uint32_t, MAX_SYMBOL> const& freqs) {
+    for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
+      ANSEncSymbolInfo& info = m_data[ix][i];
+      info.freq_ = static_cast<uint16_t>(freqs[i]);
+#ifdef USE_MULT_BY_RECIPROCAL
+      if (freqs[i] != 0) {
+        info.ifreq_ =((1ull << RECIPROCAL_PRECISION) + info.freq_ - 1) / info.freq_;
+      } else {
+        info.ifreq_ = 1;  // shouldn't matter (symbol shouldn't occur), but...
+      }
+#endif
+      info.reverse_map_.resize(freqs[i]);
+    }
+
+    // reverse map creation
+    Properties counts;
+    counts.resize(MAX_SYMBOL);
+    for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
+      counts[i] = static_cast<int>(freqs[i]);
+    }
+
+    AliasTable::Entry a[POP_SIZE];
+    InitAliasTable(counts, POP_SIZE, 8u, a);
+    for (uint32_t i = 0u; i < POP_SIZE; i++) {
+      AliasTable::Symbol s = AliasTable::Lookup(a, i, 4u, 3u);
+      m_data[ix][s.value].reverse_map_[s.offset] = i;
+    }
+  }
+
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
+};
+
+////////////////////////////////////////////////////////////////////////////
+
 }  // namespace jxl
 
 #endif  // LIB_JXL_ENC_ANS_H_
