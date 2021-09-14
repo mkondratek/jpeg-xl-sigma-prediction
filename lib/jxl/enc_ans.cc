@@ -659,7 +659,7 @@ class HistogramBuilder {
       : histograms_(num_contexts) {}
 
   void VisitSymbol(int symbol, size_t histo_idx) {
-    JXL_DASSERT(histo_idx < histograms_.size());
+//    JXL_DASSERT(histo_idx < histograms_.size());
     histograms_[histo_idx].Add(symbol);
   }
 

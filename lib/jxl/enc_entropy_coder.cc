@@ -244,11 +244,16 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
             block_ctx_map.NonZeroContext(predicted_nzeros, block_ctx);
 
         output->emplace_back(nzero_ctx, nzeros);
+        const size_t histo_offset =
+            block_ctx_map.ZeroDensityContextsOffset(block_ctx);
         // Skip LLF.
         size_t prev = (nzeros > static_cast<ssize_t>(size / 16) ? 0 : 1);
         for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
           int32_t coeff = block[order[k]];
-          size_t ctx = static_cast<size_t>(sigma[order[k]]);
+          size_t ctx = bx == 0 || by == 0 ?
+              histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
+                                                log2_covered_blocks, prev)
+           : static_cast<size_t>(sigma[order[k]]);
           uint32_t u_coeff = PackSigned(coeff);
           output->emplace_back(ctx, u_coeff);
           prev = coeff != 0;
