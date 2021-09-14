@@ -17,7 +17,7 @@
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 
-#include "ac_jpeg_predict.h"
+#include "ac_sigma_prediction.h"
 #include "dct-inl.h"
 #include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
@@ -143,30 +143,6 @@ int32_t NumNonZero8x8ExceptDC(const int32_t* JXL_RESTRICT block,
 
   return nzeros;
 }
-
-static inline float alpha(int u) { return u == 0 ? 0.7071067811865475 : 1.0; }
-
-// N-DCT on M columns, NOT divided by sqrt(N). Matches the definition in the spec.
-template <size_t N, size_t M>
-void DCT1D_no_scale(float block[N * M], float out[N * M]) {
-  std::vector<float> matrix(N * N);
-  //    const float scale = std::sqrt(2.0) / N; todo: strange scale, actual result divided by 2*sqrt(2)=sqrt(8)
-  const float scale = 0.5; // todo: working value
-  for (size_t y = 0; y < N; y++) {
-    for (size_t u = 0; u < N; u++) {
-      matrix[N * u + y] = alpha(u) * cos((y + 0.5) * u * Pi(1.0 / N)) * scale;
-    }
-  }
-  for (size_t x = 0; x < M; x++) {
-    for (size_t u = 0; u < N; u++) {
-      out[M * u + x] = 0;
-      for (size_t y = 0; y < N; y++) {
-        out[M * u + x] += matrix[N * u + y] * block[M * y + x];
-      }
-    }
-  }
-}
-
 // The number of nonzeros of each block is predicted from the top and the left
 // blocks, with opportune scaling to take into account the number of blocks of
 // each strategy.  The predicted number of nonzeros divided by two is used as a
@@ -232,9 +208,9 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * (((by - 1) * (cx + 1)) + bx));
         const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * ((by * (cx + 1)) + (bx - 1)));
         float sigma[8][8];
-        float dct1ds_t[16];
-        float* left_col_t = dct1ds_t;
-        float* top_row_t = dct1ds_t + 8;
+        float dct1ds_in[16];
+        float* left_col_t = dct1ds_in;
+        float* top_row_t = dct1ds_in + 8;
 
         float dct1ds[16];
         float* left_col = dct1ds;
@@ -245,19 +221,9 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
             left_col_t[i] = left_neighbour_block[i * 8 + 7];
             top_row_t[i] = top_neighbour_block[8 * 7 + i];
           }
-          DCT1D_no_scale<8, 1>(left_col_t, left_col);
-          DCT1D_no_scale<8, 1>(top_row_t, top_row);
-
-          float oneddcts = 0;
-          for (int i = 0; i < 16; ++i) {
-            oneddcts += std::abs(dct1ds[i]) * individual_project::vertical_horizontal_noise_evaluation[i];
-          }
-
-          for (int i = 0; i < 8; ++i) {
-            for (int j = 0; j < 8; ++j) {
-              sigma[i][j] = individual_project::beta0[i][j] + individual_project::beta1[i][j] * oneddcts;
-            }
-          }
+          sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
+          sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
+          sigma_prediction::derive_sigmas(dct1ds, sigma);
         }
 
         int32_t nzeros =

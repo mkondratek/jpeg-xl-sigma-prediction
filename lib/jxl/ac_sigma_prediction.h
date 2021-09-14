@@ -1,7 +1,12 @@
-#ifndef JPEGXL_AC_JPEG_PREDICT_H
-#define JPEGXL_AC_JPEG_PREDICT_H
+#ifndef JPEGXL_AC_SIGMA_PREDICTION_H
+#define JPEGXL_AC_SIGMA_PREDICTION_H
 
-namespace individual_project {
+#include "common.h"
+
+#include <vector>
+#include <math.h>
+
+namespace sigma_prediction {
 const float beta0[8][8] = {{0.12161, 0.0431451, 0.0167912, 0.00981121,
                             0.00641885, 0.00539675, 0.00408265, 0.00391835},
                            {0.0446049, 0.0161903, 0.00764332, 0.00464828,
@@ -41,9 +46,31 @@ const float vertical_horizontal_noise_evaluation[16] = {
     0., 0.0721139, 0.134336, 0.186764, 0.258038, 0.314061, 0.384939, 0.374337
 };
 
-const float* vertical_noise_evaluation = vertical_horizontal_noise_evaluation;
-const float* horizontal_noise_evaluation = vertical_horizontal_noise_evaluation + 8;
+void derive_sigmas(float dct1d[2 * 8], float sigmas[8][8]);
 
-}  // namespace individual_project
+static inline float alpha(int u) { return u == 0 ? 0.7071067811865475 : 1.0; }
 
-#endif  // JPEGXL_AC_JPEG_PREDICT_H
+// N-DCT on M columns, NOT divided by sqrt(N). Matches the definition in the spec.
+template <size_t N, size_t M>
+void DCT1D(float block[N * M], float out[N * M]) {
+  std::vector<float> matrix(N * N);
+  //    const float scale = std::sqrt(2.0) / N; strange scale, actual result divided by 2*sqrt(2)=sqrt(8).
+  const float scale = 0.5; // working value
+  for (size_t y = 0; y < N; y++) {
+    for (size_t u = 0; u < N; u++) {
+      matrix[N * u + y] = alpha(u) * cos((y + 0.5) * u * jxl::Pi(1.0 / N)) * scale;
+    }
+  }
+  for (size_t x = 0; x < M; x++) {
+    for (size_t u = 0; u < N; u++) {
+      out[M * u + x] = 0;
+      for (size_t y = 0; y < N; y++) {
+        out[M * u + x] += matrix[N * u + y] * block[M * y + x];
+      }
+    }
+  }
+}
+
+}  // namespace sigma_prediction
+
+#endif  // JPEGXL_AC_SIGMA_PREDICTION_H

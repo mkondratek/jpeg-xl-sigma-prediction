@@ -11,6 +11,8 @@
 #             only for encoding, should be listed here.
 set(JPEGXL_INTERNAL_SOURCES_DEC
   jxl/ac_context.h
+  jxl/ac_sigma_prediction.cc
+  jxl/ac_sigma_prediction.h
   jxl/ac_strategy.cc
   jxl/ac_strategy.h
   jxl/alpha.cc
@@ -187,8 +189,7 @@ set(JPEGXL_INTERNAL_SOURCES_DEC
   jxl/transfer_functions-inl.h
   jxl/transpose-inl.h
   jxl/xorshift128plus-inl.h
-  jxl/ac_jpeg_predict.h
-        )
+)
 
 # List of source files only needed by the encoder or by tools (including
 # decoding tools), but not by the decoder library.
