@@ -158,7 +158,6 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
                           std::vector<Token>* JXL_RESTRICT output,
                           const ImageB& qdc, const ImageI& qf,
                           const BlockCtxMap& block_ctx_map) {
-  // TAKE A LOOK HERE!!!!oneoneoen1
   const size_t xsize_blocks = rect.xsize();
   const size_t ysize_blocks = rect.ysize();
 
@@ -207,7 +206,7 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const int32_t* JXL_RESTRICT block = ac_rows[c] + offset[c];
         const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * (((by - 1) * (cx + 1)) + bx));
         const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * ((by * (cx + 1)) + (bx - 1)));
-        float sigma[8][8];
+        float sigma[64];
         float dct1ds_in[16];
         float* left_col_t = dct1ds_in;
         float* top_row_t = dct1ds_in + 8;
@@ -245,15 +244,11 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
             block_ctx_map.NonZeroContext(predicted_nzeros, block_ctx);
 
         output->emplace_back(nzero_ctx, nzeros);
-        const size_t histo_offset =
-            block_ctx_map.ZeroDensityContextsOffset(block_ctx);
         // Skip LLF.
         size_t prev = (nzeros > static_cast<ssize_t>(size / 16) ? 0 : 1);
         for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
           int32_t coeff = block[order[k]];
-          size_t ctx =
-              histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
-                                                log2_covered_blocks, prev);
+          size_t ctx = static_cast<size_t>(sigma[order[k]]);
           uint32_t u_coeff = PackSigned(coeff);
           output->emplace_back(ctx, u_coeff);
           prev = coeff != 0;

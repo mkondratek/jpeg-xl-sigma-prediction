@@ -46,7 +46,7 @@ const float vertical_horizontal_noise_evaluation[16] = {
     0., 0.0721139, 0.134336, 0.186764, 0.258038, 0.314061, 0.384939, 0.374337
 };
 
-void derive_sigmas(float dct1d[2 * 8], float sigmas[8][8]);
+void derive_sigmas(float dct1d[2 * 8], float sigmas[64]);
 
 static inline float alpha(int u) { return u == 0 ? 0.7071067811865475 : 1.0; }
 
