@@ -195,6 +195,7 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
       const size_t log2_covered_blocks =
           Num0BitsBelowLS1Bit_Nonzero(covered_blocks);
       const size_t size = covered_blocks * kDCTBlockSize;
+      // TODO (thomoncik): predict sigma for each of covered blocks
 
       CoefficientLayout(&cy, &cx);  // swap cx/cy to canonical order
 
@@ -215,15 +216,19 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         float* left_col = dct1ds;
         float* top_row = dct1ds + 8;
 
-        if (bx != 0 && by != 0) {
-          for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 8; ++i) {
+          if (bx != 0 && by != 0) {
             left_col_t[i] = left_neighbour_block[i * 8 + 7];
             top_row_t[i] = top_neighbour_block[8 * 7 + i];
+          } else {
+            left_col_t[i] = block[i * 8];
+            top_row_t[i] = block[i];
           }
-          sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
-          sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
-          sigma_prediction::derive_sigmas(dct1ds, sigma);
         }
+
+        sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
+        sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
+        sigma_prediction::derive_sigmas(dct1ds, sigma);
 
         int32_t nzeros =
             (covered_blocks == 1)
@@ -244,16 +249,12 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
             block_ctx_map.NonZeroContext(predicted_nzeros, block_ctx);
 
         output->emplace_back(nzero_ctx, nzeros);
-        const size_t histo_offset =
-            block_ctx_map.ZeroDensityContextsOffset(block_ctx);
+
         // Skip LLF.
         size_t prev = (nzeros > static_cast<ssize_t>(size / 16) ? 0 : 1);
         for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
           int32_t coeff = block[order[k]];
-          size_t ctx = bx == 0 || by == 0 ?
-              histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
-                                                log2_covered_blocks, prev)
-           : static_cast<size_t>(sigma[order[k]]);
+          size_t ctx = static_cast<size_t>(sigma[order[k]]);
           uint32_t u_coeff = PackSigned(coeff);
           output->emplace_back(ctx, u_coeff);
           prev = coeff != 0;

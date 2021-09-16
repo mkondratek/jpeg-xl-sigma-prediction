@@ -557,6 +557,7 @@ JXL_INLINE void RightMirror(float* p, size_t n) {
 }
 
 void ComputeSigma(const Rect& block_rect, PassesDecoderState* state) {
+  // TODO (thomoncik): check if our sigma prediction should be moved here
   const LoopFilter& lf = state->shared->frame_header.loop_filter;
   JXL_CHECK(lf.epf_iters > 0);
   const AcStrategyImage& ac_strategy = state->shared->ac_strategy;
