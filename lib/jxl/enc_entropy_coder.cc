@@ -241,6 +241,23 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const coeff_order_t* JXL_RESTRICT order =
             &orders[CoeffOrderOffset(ord, c)];
 
+        const float SIGMA_COUNT = 16;
+        const float MAX_SYMBOL = 256;
+        const float BUCKET_SIZE = MAX_SYMBOL / SIGMA_COUNT;
+        if (c == 1) {
+          for (size_t k = covered_blocks, auxy = 0; k < size; ++auxy) {
+            for (size_t auxx = 0; auxx < 8; ++auxx, ++k) {
+              if (block[order[k]] != 0) {
+                std::clog << "(" << block[order[k]] << ", " << std::round(sigma[order[k]] / BUCKET_SIZE) << ")  ";
+              } else {
+                std::clog << "(___, _)  ";
+              }
+            }
+            std::clog << std::endl;
+          }
+          std::clog << "--------------------" << std::endl;
+        }
+
         int32_t predicted_nzeros =
             PredictFromTopAndLeft(row_nzeros_top[c], row_nzeros[c], sbx[c], 32);
         size_t block_ctx =
@@ -249,14 +266,18 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
             block_ctx_map.NonZeroContext(predicted_nzeros, block_ctx);
 
         output->emplace_back(nzero_ctx, nzeros);
-
+        const size_t histo_offset =
+            block_ctx_map.ZeroDensityContextsOffset(block_ctx);
         // Skip LLF.
         size_t prev = (nzeros > static_cast<ssize_t>(size / 16) ? 0 : 1);
         for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
           int32_t coeff = block[order[k]];
-          size_t ctx = static_cast<size_t>(sigma[order[k]]);
+          size_t ctx = histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
+                                            log2_covered_blocks, prev);
+//          uint32_t sigma_single = static_cast<uint32_t>(sigma[order[k]]);
+          uint32_t sigma_single = static_cast<uint32_t>(std::round(sigma[order[k]] / BUCKET_SIZE));
           uint32_t u_coeff = PackSigned(coeff);
-          output->emplace_back(ctx, u_coeff);
+          output->emplace_back(ctx, u_coeff, sigma_single);
           prev = coeff != 0;
           nzeros -= prev;
         }

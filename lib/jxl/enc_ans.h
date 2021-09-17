@@ -16,6 +16,8 @@
 #include <string.h>
 
 #include <algorithm>
+#include <iostream>
+#include <numeric>
 #include <vector>
 
 #include "lib/jxl/ans_common.h"
@@ -93,11 +95,12 @@ struct EntropyEncodingData {
 
 // Integer to be encoded by an entropy coder, either ANS or Huffman.
 struct Token {
-  Token(uint32_t c, uint32_t value)
-      : is_lz77_length(false), context(c), value(value) {}
+  Token(uint32_t c, uint32_t value, uint32_t sigma = -1)
+      : is_lz77_length(false), context(c), value(value), sigma(sigma) {}
   uint32_t is_lz77_length : 1;
   uint32_t context : 31;
   uint32_t value;
+  uint32_t sigma;
 };
 
 // Returns an estimate of the number of bits required to encode the given
@@ -144,14 +147,14 @@ template <uint32_t POP_SIZE = ANS_TAB_SIZE, uint32_t SIGMA_COUNT = 16u,
           uint32_t MAX_SYMBOL = 256u>
 class ANSLaplaceTable {
  public:
-  ANSLaplaceTable(double q, double q_sigma) { CreateTables(q, q_sigma); }
+  ANSLaplaceTable(uint32_t low, uint32_t high) { CreateTables(low, high); }
 
   ANSEncSymbolInfo const& get_symbol(uint32_t value, uint32_t sigma) const {
     return m_data[sigma % SIGMA_COUNT][value % MAX_SYMBOL];
   }
 
   ANSEncSymbolInfo const& get_symbol(Token const& t) const {
-    return get_symbol(t.value, t.context);
+    return get_symbol(t.value, t.sigma);
   }
 
   std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> const&
@@ -160,44 +163,67 @@ class ANSLaplaceTable {
   }
 
  private:
-  void CreateTables(double q, double q_sigma) {
-    for (uint32_t i = 0u; i < SIGMA_COUNT; i++) {
-      std::array<uint32_t, MAX_SYMBOL> freqs;
-      CalculateFreqs(static_cast<double>(i + 1) * q_sigma, q, freqs);
-      CreateFreqTable(i, freqs);
-    }
-  }
-  void CalculateFreqs(double sigma, double q,
-                      std::array<uint32_t, MAX_SYMBOL>& freqs) {
-    std::array<uint32_t, MAX_SYMBOL + 1> cdf;
-    cdf[0] = 0u;
-    cdf[MAX_SYMBOL] = POP_SIZE - MAX_SYMBOL;
-    for (uint32_t i = 1u; i < MAX_SYMBOL; i++) {
-      double v = (static_cast<double>(static_cast<int>(i) -static_cast<int>(MAX_SYMBOL / 2)) -0.5) *q;
-      double cdf_d =(v <= 0.0) ? (0.5 * exp(v / sigma)) : (1.0 - 0.5 * exp(-v / sigma));
-      cdf[i] = static_cast<uint32_t>(cdf_d * static_cast<double>(POP_SIZE - MAX_SYMBOL));
+  std::array<std::array<uint32_t, MAX_SYMBOL>, SIGMA_COUNT> distribution;
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
+
+  void CreateTables(uint32_t low, uint32_t high) {
+    JXL_ASSERT((high - low) == SIGMA_COUNT);
+    for (uint32_t sig = low; sig < high; sig++) {
+      CalculateDistribution(sig);
+      CreateFreqTable(sig);
     }
   }
 
-  void CreateFreqTable(uint32_t ix,std::array<uint32_t, MAX_SYMBOL> const& freqs) {
+  double cdf(double x) {
+    double sgn = (x > 0) ? 1 : -1;
+    if (std::fpclassify(x) == FP_ZERO) {
+      sgn = 0;
+    }
+
+    return 0.5 * (sgn * (1 - std::exp(-std::abs(x))) + 1);
+  }
+
+  void CalculateDistribution(uint32_t sig) {
+    double sigma = 0.125 + 0.25 * sig;
+
+    for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
+      double v = static_cast<double>(static_cast<int>(i) -
+                                     static_cast<int>(MAX_SYMBOL / 2));
+
+      if (i == 0) {
+        distribution[sig][i] = std::round(1 + POP_SIZE * cdf((v + 0.5) / sig));
+      } else if (i == MAX_SYMBOL - 1) {
+        distribution[sig][i] = std::round(1 + POP_SIZE * (1 - cdf((v - 0.5) / sig)));
+      } else {
+        distribution[sig][i] =
+            std::round(1 + POP_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma)));
+      }
+    }
+
+    int sum = std::accumulate(distribution[sig].begin(), distribution[sig].end(), 0);
+    *std::max_element(distribution[sig].begin(),  distribution[sig].end()) += (POP_SIZE - sum);
+  }
+
+  void CreateFreqTable(uint32_t ix) {
     for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
       ANSEncSymbolInfo& info = m_data[ix][i];
-      info.freq_ = static_cast<uint16_t>(freqs[i]);
+      info.freq_ = static_cast<uint16_t>(distribution[ix][i]);
 #ifdef USE_MULT_BY_RECIPROCAL
-      if (freqs[i] != 0) {
+      if (distribution[ix][i] != 0) {
+//        std::clog << "ix = " << ix << " | Dist[" << i << "] = " << distribution[i] << std::endl;
         info.ifreq_ =((1ull << RECIPROCAL_PRECISION) + info.freq_ - 1) / info.freq_;
       } else {
         info.ifreq_ = 1;  // shouldn't matter (symbol shouldn't occur), but...
       }
 #endif
-      info.reverse_map_.resize(freqs[i]);
+      info.reverse_map_.resize(distribution[ix][i]);
     }
 
     // reverse map creation
     Properties counts;
     counts.resize(MAX_SYMBOL);
     for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
-      counts[i] = static_cast<int>(freqs[i]);
+      counts[i] = static_cast<int>(distribution[ix][i]);
     }
 
     AliasTable::Entry a[POP_SIZE];
@@ -207,8 +233,6 @@ class ANSLaplaceTable {
       m_data[ix][s.value].reverse_map_[s.offset] = i;
     }
   }
-
-  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
 };
 
 ////////////////////////////////////////////////////////////////////////////

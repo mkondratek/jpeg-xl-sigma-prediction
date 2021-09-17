@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <type_traits>
@@ -1627,43 +1628,40 @@ size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
   };
   const int end = tokens.size();
 
-  static auto laplace =
-      ANSLaplaceTable<ANS_TAB_SIZE, 16u, 256u>(1.0 / 4.0, 0.5);
+  static auto laplace = ANSLaplaceTable<ANS_TAB_SIZE, 16u, 256u>(0, 16);
 
-  // std::cout << "\nsigmas: " << laplace.data().size() << "    (";
-  // for (uint32_t i = 0; i < laplace.data().size(); i++) {
-  //  std::cout << static_cast<int>(laplace.data()[i].size() == 256u);
-  //}
-  // std::cout << ")\n";
+  std::cout << "\nsigmas: " << laplace.data().size() << "    (";
+   for (uint32_t i = 0; i < laplace.data().size(); i++) {
+    std::cout << static_cast<int>(laplace.data()[i].size() == 256u);
+  }
+   std::cout << ")\n";
 
   // dump sigmas (4 bits each)
   for (int i = end - 1; i >= 0; --i) {
-    const auto sigma = tokens[i].context % 16u;
+    const auto sigma = tokens[i].sigma % 16u;
     writer->Write(4, sigma);
   }
 
   ANSCoder ans;
-  // std::cout << "tokens: " << end << '\n';
+   std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
-    // std::cout << "Pre-pre-";
+     std::cout << "Pre-pre-";
     const ANSEncSymbolInfo& info = laplace.get_symbol(tokens[i]);
     uint8_t ans_nbits = 0;
-    // std::cout << "Pre - (val:" << tokens[i].value
-    //           << ", sigma:" << tokens[i].context % 16 << ", freq:" <<
-    //           info.freq_
-    //           << ")";
+     std::cout << "Pre - (val:" << tokens[i].value
+               << ", sigma:" << tokens[i].sigma % 16 << ", freq:" <<
+               info.freq_
+               << ")";
     uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
-    // std::cout << " - Post!" << std::endl;
+     std::cout << " - Post!" << std::endl;
     addbits(ans_bits, ans_nbits);
   }
-
   const uint32_t state = ans.GetState();
   writer->Write(32, state);
   writer->Write(numallbits, allbits);
   for (int i = out.size(); i > 0; --i) {
     writer->Write(out_nbits[i - 1], out[i - 1]);
   }
-
   return num_extra_bits;
 }
 
