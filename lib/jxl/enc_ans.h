@@ -143,8 +143,7 @@ void SetANSFuzzerFriendly(bool ans_fuzzer_friendly);
 
 ////////////////////////////// ANS LAPLACE TABLES ////////////////////////////
 
-template <uint32_t POP_SIZE = ANS_TAB_SIZE, uint32_t SIGMA_COUNT = 16u,
-          uint32_t MAX_SYMBOL = 256u>
+template <uint32_t SIGMA_COUNT = 16u, uint32_t MAX_SYMBOL = 256u>
 class ANSLaplaceTable {
  public:
   ANSLaplaceTable(uint32_t low, uint32_t high) { CreateTables(low, high); }
@@ -170,7 +169,7 @@ class ANSLaplaceTable {
     JXL_ASSERT((high - low) == SIGMA_COUNT);
     for (uint32_t sig = low; sig < high; sig++) {
       CalculateDistribution(sig);
-      CreateFreqTable(m_data[sig].data(), sig);
+      CreateFreqTable( sig);
     }
   }
 
@@ -191,18 +190,18 @@ class ANSLaplaceTable {
                                      static_cast<int>(MAX_SYMBOL / 2));
 
       if (i == 0) {
-        distribution[sig][i] = std::round(1 + POP_SIZE * cdf((v + 0.5) / sig));
+        distribution[sig][i] = std::round(1 + ANS_TAB_SIZE * cdf((v + 0.5) / sig));
       } else if (i == MAX_SYMBOL - 1) {
-        distribution[sig][i] = std::round(1 + POP_SIZE * (1 - cdf((v - 0.5) / sig)));
+        distribution[sig][i] = std::round(1 + ANS_TAB_SIZE * (1 - cdf((v - 0.5) / sig)));
       } else {
         distribution[sig][i] =
-            std::round(1 + POP_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma)));
+            std::round(1 + ANS_TAB_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma)));
       }
     }
 
     int sum = std::accumulate(distribution[sig].begin(), distribution[sig].end(), 0);
     ANSHistBin* maxElement = std::max_element(distribution[sig].begin(), distribution[sig].end());
-    *maxElement += (POP_SIZE - sum);
+    *maxElement += (ANS_TAB_SIZE - sum);
     while (*maxElement < *(maxElement - 1)) {
       int shift = 1;
       while (*(maxElement - shift) != 1) {
@@ -214,13 +213,16 @@ class ANSLaplaceTable {
     }
   }
 
-  void CreateFreqTable(ANSEncSymbolInfo* info, uint32_t sig) {
+  void CreateFreqTable( uint32_t sig) {
+    std::array<ANSEncSymbolInfo, MAX_SYMBOL>& info = m_data[sig];
     const std::array<ANSHistBin, MAX_SYMBOL>& freq = distribution[sig];
+
     for (uint32_t s = 0u; s < MAX_SYMBOL; s++) {
       info[s].freq_ = static_cast<uint16_t>(freq[s]);
 #ifdef USE_MULT_BY_RECIPROCAL
       if (freq[s] != 0) {
-        info[s].ifreq_ = ((1ull << RECIPROCAL_PRECISION) + info[s].freq_ - 1) / info[s].freq_;
+        info[s].ifreq_ =
+            ((1ull << RECIPROCAL_PRECISION) + info[s].freq_ - 1) / info[s].freq_;
       } else {
         info[s].ifreq_ = 1;  // shouldn't matter (symbol shouldn't occur), but...
       }
@@ -232,14 +234,18 @@ class ANSLaplaceTable {
     Properties counts;
     counts.resize(MAX_SYMBOL);
     for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
-      counts[i] = static_cast<int>(distribution[sig][i]);
+      counts[i] = static_cast<int>(freq[i]);
     }
+    size_t log_alpha_size = 8;
+    size_t log_entry_size = ANS_LOG_TAB_SIZE - log_alpha_size;
+    size_t entry_size_minus_1 = (1 << log_entry_size) - 1;
 
-    AliasTable::Entry a[POP_SIZE];
-    InitAliasTable(counts, POP_SIZE, 8u, a);
-    for (uint32_t i = 0u; i < POP_SIZE; i++) {
-      AliasTable::Symbol s = AliasTable::Lookup(a, i, 4u, 3u);
-      m_data[sig][s.value].reverse_map_[s.offset] = i;
+    AliasTable::Entry a[ANS_TAB_SIZE];
+    InitAliasTable(counts, ANS_TAB_SIZE, log_alpha_size, a);
+    for (uint32_t i = 0u; i < ANS_TAB_SIZE; i++) {
+      AliasTable::Symbol s =
+          AliasTable::Lookup(a, i, log_entry_size, entry_size_minus_1);
+      info[s.value].reverse_map_[s.offset] = i;
     }
   }
 };

@@ -1629,7 +1629,7 @@ size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
   };
   const int end = tokens.size();
 
-  static auto laplace = ANSLaplaceTable<ANS_TAB_SIZE, 16u, 256u>(0, 16);
+  static auto laplace = ANSLaplaceTable<16u, 256u>(0, 16);
 
   std::cout << "\nsigmas: " << laplace.data().size() << "    (";
    for (uint32_t i = 0; i < laplace.data().size(); i++) {
