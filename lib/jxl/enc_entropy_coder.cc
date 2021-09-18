@@ -218,8 +218,8 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
 
         for (int i = 0; i < 8; ++i) {
           if (bx != 0 && by != 0) {
-            left_col_t[i] = left_neighbour_block[i * 8 + 7];
-            top_row_t[i] = top_neighbour_block[8 * 7 + i];
+            left_col_t[i] = left_neighbour_block[i * 8];
+            top_row_t[i] = top_neighbour_block[i];
           } else {
             left_col_t[i] = block[i * 8];
             top_row_t[i] = block[i];
@@ -241,16 +241,13 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const coeff_order_t* JXL_RESTRICT order =
             &orders[CoeffOrderOffset(ord, c)];
 
-        const float SIGMA_COUNT = 16;
-        const float MAX_SYMBOL = 256;
-        const float BUCKET_SIZE = MAX_SYMBOL / SIGMA_COUNT;
         if (c == 1) {
           for (size_t k = covered_blocks, auxy = 0; k < size; ++auxy) {
             for (size_t auxx = 0; auxx < 8; ++auxx, ++k) {
               if (block[order[k]] != 0) {
-                std::clog << "(" << block[order[k]] << ", " << std::round(sigma[order[k]] / BUCKET_SIZE) << ")  ";
+                std::clog << "(" << block[order[k]] << ", " << sigma[order[k]] << ")  ";
               } else {
-                std::clog << "(___, _)  ";
+                std::clog << "()  ";
               }
             }
             std::clog << std::endl;
@@ -265,7 +262,7 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const int32_t nzero_ctx =
             block_ctx_map.NonZeroContext(predicted_nzeros, block_ctx);
 
-        output->emplace_back(nzero_ctx, nzeros);
+        output->emplace_back(nzero_ctx, nzeros, 1);
         const size_t histo_offset =
             block_ctx_map.ZeroDensityContextsOffset(block_ctx);
         // Skip LLF.
@@ -274,10 +271,9 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
           int32_t coeff = block[order[k]];
           size_t ctx = histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
                                             log2_covered_blocks, prev);
-//          uint32_t sigma_single = static_cast<uint32_t>(sigma[order[k]]);
-          uint32_t sigma_single = static_cast<uint32_t>(std::round(sigma[order[k]] / BUCKET_SIZE));
+          uint32_t sigma_quant = static_cast<uint32_t>(std::floor(sigma[order[k]] / 8));
           uint32_t u_coeff = PackSigned(coeff);
-          output->emplace_back(ctx, u_coeff, sigma_single);
+          output->emplace_back(ctx, u_coeff, sigma_quant);
           prev = coeff != 0;
           nzeros -= prev;
         }

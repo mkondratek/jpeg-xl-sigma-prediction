@@ -1605,8 +1605,9 @@ size_t WriteTokens(const std::vector<Token>& tokens,
 
 /////////////// AC CODING WITH LAPLACE SIGMAS //////////////////////////////////
 
-size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
+size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
   size_t num_extra_bits = 0;
+  std::vector<Token> tokens(tokens_org);
 
   std::vector<uint64_t> out;
   std::vector<uint8_t> out_nbits;
@@ -1636,24 +1637,23 @@ size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
   }
    std::cout << ")\n";
 
-  // dump sigmas (4 bits each)
-  for (int i = end - 1; i >= 0; --i) {
-    const auto sigma = tokens[i].sigma % 16u;
-    writer->Write(4, sigma);
-  }
-
   ANSCoder ans;
    std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
-     std::cout << "Pre-pre-";
+    while (tokens[i].sigma > 16 && tokens[i].sigma != uint32_t(-1)) {
+      std::cout << "flush value " << (tokens[i].value & 1) << " because of sigma " << " " << tokens[i].sigma << std::endl;
+      tokens[i].sigma >>= 1;
+      writer->Write(1, tokens[i].value & 1);
+      tokens[i].value >>= 1;
+    }
+    std::cout << "Pre-pre-";
     const ANSEncSymbolInfo& info = laplace.get_symbol(tokens[i]);
     uint8_t ans_nbits = 0;
-     std::cout << "Pre - (val:" << tokens[i].value
-               << ", sigma:" << tokens[i].sigma % 16 << ", freq:" <<
-               info.freq_
-               << ")";
+    std::cout << "Pre - (val:" << tokens[i].value
+              << ", sigma:" << tokens[i].sigma << ", freq:" << info.freq_
+              << ")";
     uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
-     std::cout << " - Post!" << std::endl;
+    std::cout << " - Post!" << std::endl;
     addbits(ans_bits, ans_nbits);
   }
   const uint32_t state = ans.GetState();

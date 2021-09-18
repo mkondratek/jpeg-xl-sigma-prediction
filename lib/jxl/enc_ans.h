@@ -184,7 +184,7 @@ class ANSLaplaceTable {
   }
 
   void CalculateDistribution(uint32_t sig) {
-    double sigma = 0.125 + 0.25 * sig;
+    double sigma = 0.125 + 2 * 0.25 * sig;
 
     for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
       double v = static_cast<double>(static_cast<int>(i) -
