@@ -163,14 +163,14 @@ class ANSLaplaceTable {
   }
 
  private:
-  std::array<std::array<uint32_t, MAX_SYMBOL>, SIGMA_COUNT> distribution;
+  std::array<std::array<ANSHistBin, MAX_SYMBOL>, SIGMA_COUNT> distribution;
   std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
 
   void CreateTables(uint32_t low, uint32_t high) {
     JXL_ASSERT((high - low) == SIGMA_COUNT);
     for (uint32_t sig = low; sig < high; sig++) {
       CalculateDistribution(sig);
-      CreateFreqTable(sig);
+      CreateFreqTable(m_data[sig].data(), sig);
     }
   }
 
@@ -201,36 +201,45 @@ class ANSLaplaceTable {
     }
 
     int sum = std::accumulate(distribution[sig].begin(), distribution[sig].end(), 0);
-    *std::max_element(distribution[sig].begin(),  distribution[sig].end()) += (POP_SIZE - sum);
+    ANSHistBin* maxElement = std::max_element(distribution[sig].begin(), distribution[sig].end());
+    *maxElement += (POP_SIZE - sum);
+    while (*maxElement < *(maxElement - 1)) {
+      int shift = 1;
+      while (*(maxElement - shift) != 1) {
+        *maxElement += 2;
+        *(maxElement + shift) -= 1;
+        *(maxElement - shift) -= 1;
+        shift++;
+      }
+    }
   }
 
-  void CreateFreqTable(uint32_t ix) {
-    for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
-      ANSEncSymbolInfo& info = m_data[ix][i];
-      info.freq_ = static_cast<uint16_t>(distribution[ix][i]);
+  void CreateFreqTable(ANSEncSymbolInfo* info, uint32_t sig) {
+    const std::array<ANSHistBin, MAX_SYMBOL>& freq = distribution[sig];
+    for (uint32_t s = 0u; s < MAX_SYMBOL; s++) {
+      info[s].freq_ = static_cast<uint16_t>(freq[s]);
 #ifdef USE_MULT_BY_RECIPROCAL
-      if (distribution[ix][i] != 0) {
-//        std::clog << "ix = " << ix << " | Dist[" << i << "] = " << distribution[i] << std::endl;
-        info.ifreq_ =((1ull << RECIPROCAL_PRECISION) + info.freq_ - 1) / info.freq_;
+      if (freq[s] != 0) {
+        info[s].ifreq_ = ((1ull << RECIPROCAL_PRECISION) + info[s].freq_ - 1) / info[s].freq_;
       } else {
-        info.ifreq_ = 1;  // shouldn't matter (symbol shouldn't occur), but...
+        info[s].ifreq_ = 1;  // shouldn't matter (symbol shouldn't occur), but...
       }
 #endif
-      info.reverse_map_.resize(distribution[ix][i]);
+      info[s].reverse_map_.resize(freq[s]);
     }
 
     // reverse map creation
     Properties counts;
     counts.resize(MAX_SYMBOL);
     for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
-      counts[i] = static_cast<int>(distribution[ix][i]);
+      counts[i] = static_cast<int>(distribution[sig][i]);
     }
 
     AliasTable::Entry a[POP_SIZE];
     InitAliasTable(counts, POP_SIZE, 8u, a);
     for (uint32_t i = 0u; i < POP_SIZE; i++) {
       AliasTable::Symbol s = AliasTable::Lookup(a, i, 4u, 3u);
-      m_data[ix][s.value].reverse_map_[s.offset] = i;
+      m_data[sig][s.value].reverse_map_[s.offset] = i;
     }
   }
 };
