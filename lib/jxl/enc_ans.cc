@@ -1603,6 +1603,134 @@ size_t WriteTokens(const std::vector<Token>& tokens,
   return num_extra_bits;
 }
 
+////////////////////////////// ANS LAPLACE TABLES ////////////////////////////
+
+template <uint32_t SIGMA_COUNT = 16u, uint32_t MAX_SYMBOL = 256u>
+class ANSLaplaceTable {
+ public:
+  ANSLaplaceTable(uint32_t low, uint32_t high) : builder(SIGMA_COUNT) { CreateTables(low, high); }
+
+  ANSEncSymbolInfo const& get_symbol(uint32_t value, uint32_t sigma) const {
+    return m_data[sigma % SIGMA_COUNT][value % MAX_SYMBOL];
+  }
+
+  ANSEncSymbolInfo const& get_symbol(Token const& t) const {
+    return get_symbol(t.value, t.sigma);
+  }
+
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> const&
+  data() const {
+    return m_data;
+  }
+
+  EntropyEncodingData codes;
+ private:
+  HistogramBuilder builder;
+  std::array<std::array<ANSHistBin, MAX_SYMBOL>, SIGMA_COUNT> distribution;
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
+
+  void CreateTables(uint32_t low, uint32_t high) {
+    JXL_ASSERT((high - low) == SIGMA_COUNT);
+    for (uint32_t sig = low; sig < high; sig++) {
+      CalculateDistribution(sig);
+    }
+
+    std::vector<u_int8_t> context_map;
+    builder.BuildAndStoreEntropyCodes({}, {}, &codes, &context_map, false, nullptr, kLayerACTokens, nullptr);
+//    CreateFreqTable();
+  }
+
+  double cdf(double x) {
+    double sgn = (x > 0) ? 1 : -1;
+    if (std::fpclassify(x) == FP_ZERO) {
+      sgn = 0;
+    }
+
+    return 0.5 * (sgn * (1 - std::exp(-std::abs(x))) + 1);
+  }
+
+  void CalculateDistribution(uint32_t sig) {
+    double sigma = 0.125 + 2 * 0.25 * sig;
+
+    for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
+      double v = static_cast<double>(static_cast<int>(i) -
+                                     static_cast<int>(MAX_SYMBOL / 2));
+      if (i == 0) {
+        distribution[sig][i] =
+            std::round(1 + ANS_TAB_SIZE * cdf((v + 0.5) / sig));
+      } else if (i == MAX_SYMBOL - 1) {
+        distribution[sig][i] =
+            std::round(1 + ANS_TAB_SIZE * (1 - cdf((v - 0.5) / sig)));
+      } else {
+        distribution[sig][i] =
+            std::round(1 + ANS_TAB_SIZE * (cdf((v + 0.5) / sigma) -
+                                           cdf((v - 0.5) / sigma)));
+      }
+    }
+
+    int sum =
+        std::accumulate(distribution[sig].begin(), distribution[sig].end(), 0);
+    ANSHistBin* maxElement =
+        std::max_element(distribution[sig].begin(), distribution[sig].end());
+    *maxElement += (ANS_TAB_SIZE - sum);
+    while (*maxElement < *(maxElement - 1)) {
+      int shift = 1;
+      while (*(maxElement - shift) != 1) {
+        *maxElement += 1;
+        *(maxElement + shift) -= 1;
+        *(maxElement - shift) -= 1;
+        shift++;
+      }
+    }
+
+    for (int i = 0; i < MAX_SYMBOL; ++i) {
+      for (int j = 0; j < distribution[sig][i]; ++j) {
+        builder.VisitSymbol(j, sig);
+      }
+    }
+  }
+
+//  void CreateFreqTable(uint32_t sig) {
+//    std::array<ANSEncSymbolInfo, MAX_SYMBOL>& info = m_data[sig];
+//    const std::array<ANSHistBin, MAX_SYMBOL>& freq = distribution[sig];
+//
+//    for (uint32_t s = 0u; s < MAX_SYMBOL; s++) {
+//      info[s].freq_ = static_cast<uint16_t>(freq[s]);
+//#ifdef USE_MULT_BY_RECIPROCAL
+//      if (freq[s] != 0) {
+//        info[s].ifreq_ = ((1ull << RECIPROCAL_PRECISION) + info[s].freq_ - 1) /
+//                         info[s].freq_;
+//      } else {
+//        info[s].ifreq_ =
+//            1;  // shouldn't matter (symbol shouldn't occur), but...
+//      }
+//#endif
+//      info[s].reverse_map_.resize(freq[s]);
+//    }
+//
+//    // reverse map creation
+//    Properties counts;
+//    counts.resize(MAX_SYMBOL);
+//    for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
+//      counts[i] = static_cast<int>(freq[i]);
+//    }
+//    size_t log_alpha_size = 8;
+//    size_t log_entry_size = ANS_LOG_TAB_SIZE - log_alpha_size;
+//    size_t entry_size_minus_1 = (1 << log_entry_size) - 1;
+//
+//    AliasTable::Entry a[ANS_TAB_SIZE];
+//    InitAliasTable(counts, ANS_TAB_SIZE, log_alpha_size, a);
+//    for (uint32_t i = 0u; i < ANS_TAB_SIZE; i++) {
+//      AliasTable::Symbol s =
+//          AliasTable::Lookup(a, i, log_entry_size, entry_size_minus_1);
+//      info[s.value].reverse_map_[s.offset] = i;
+//    }
+//  }
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+
 /////////////// AC CODING WITH LAPLACE SIGMAS //////////////////////////////////
 
 size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
@@ -1640,18 +1768,17 @@ size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
   ANSCoder ans;
    std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
-    while (tokens[i].sigma > 16 && tokens[i].sigma != uint32_t(-1)) {
+    while (tokens[i].sigma > 11 && tokens[i].sigma != uint32_t(-1)) {
       std::cout << "flush value " << (tokens[i].value & 1) << " because of sigma " << " " << tokens[i].sigma << std::endl;
       tokens[i].sigma >>= 1;
       writer->Write(1, tokens[i].value & 1);
       tokens[i].value >>= 1;
     }
-    std::cout << "Pre-pre-";
-    const ANSEncSymbolInfo& info = laplace.get_symbol(tokens[i]);
+    uint32_t tok = tokens[i].is_lz77_length ? laplace.codes.lz77.min_symbol : 0;
+    const ANSEncSymbolInfo& info = laplace.codes.encoding_info[tokens[i].sigma == -1u ? 0 : tokens[i].sigma][tok];
+//    const ANSEncSymbolInfo& info = laplace.get_symbol(tokens[i]);
     uint8_t ans_nbits = 0;
-    std::cout << "Pre - (val:" << tokens[i].value
-              << ", sigma:" << tokens[i].sigma << ", freq:" << info.freq_
-              << ")";
+    std::cout << "Pre - (val:" << tokens[i].value << ", sigma:" << tokens[i].sigma << ")";
     uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
     std::cout << " - Post!" << std::endl;
     addbits(ans_bits, ans_nbits);
