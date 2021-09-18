@@ -245,20 +245,6 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const coeff_order_t* JXL_RESTRICT order =
             &orders[CoeffOrderOffset(ord, c)];
 
-        if (c == 1) {
-          for (size_t k = covered_blocks, auxy = 0; k < size; ++auxy) {
-            for (size_t auxx = 0; auxx < 8; ++auxx, ++k) {
-              if (block[order[k]] != 0) {
-                std::clog << "(" << block[order[k]] << ", " << sigma[order[k]] << ")  ";
-              } else {
-                std::clog << "()  ";
-              }
-            }
-            std::clog << std::endl;
-          }
-          std::clog << "--------------------" << std::endl;
-        }
-
         int32_t predicted_nzeros =
             PredictFromTopAndLeft(row_nzeros_top[c], row_nzeros[c], sbx[c], 32);
         size_t block_ctx =
