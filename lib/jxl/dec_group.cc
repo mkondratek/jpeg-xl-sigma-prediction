@@ -577,7 +577,7 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
                                             log2_covered_blocks, prev);
       const size_t u_coeff_2 = decoder->ReadHybridUint(ctx, br, context_map);
 
-      const size_t u_coeff = decoder->ReadSymbolSigma(sigmas[k], br);
+      const size_t u_coeff = decoder->ReadSymbolSigma(std::floor(sigmas[k] * 4), br);
       // Hand-rolled version of UnpackSigned, shifting before the conversion to
       // signed integer to avoid undefined behavior of shifting negative
       // numbers.

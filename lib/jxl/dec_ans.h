@@ -192,13 +192,17 @@ class ANSSymbolReader {
 
   /////////////////////////////// LAPLACE ATTEMPT ///////////////////////
 
-  JXL_INLINE size_t ReadSymbolSigmaWithoutRefill(const uint32_t sigma_idx,
+  JXL_INLINE size_t ReadSymbolSigmaWithoutRefill(const uint32_t sig,
                                                  BitReader* JXL_RESTRICT br) {
     const uint32_t res = state_ & (ANS_TAB_SIZE - 1u);
 
-    auto const& table = sigma_alias_tables_[sigma_idx];
+    size_t log_alpha_size = 8;
+    size_t log_entry_size = ANS_LOG_TAB_SIZE - log_alpha_size;
+    size_t entry_size_minus_1 = (1 << log_entry_size) - 1;
+
+    auto const& table = sigma_alias_tables_[sig];
     const AliasTable::Symbol symbol = AliasTable::Lookup(
-        table.data(), res, log_entry_size_, entry_size_minus_1_);
+        table.data(), res, log_entry_size, entry_size_minus_1);
     state_ = symbol.freq * (state_ >> ANS_LOG_TAB_SIZE) + symbol.offset;
 
 #if 1
