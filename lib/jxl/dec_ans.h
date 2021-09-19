@@ -186,7 +186,7 @@ class ANSSymbolReader {
       if (dist < 1) dist = 1;
       special_distances_[i] = dist;
     }
-    CreateLaplaceAliasTables(0.25, 0.5);
+    CreateLaplaceAliasTables();
   }
 
   /////////////////////////////// LAPLACE ATTEMPT ///////////////////////
@@ -447,41 +447,43 @@ class ANSSymbolReader {
   }
 
  private:
-  void CreateLaplaceAliasTables(double q, double sigma_q) {
-    for (uint32_t sigma_idx = 0; sigma_idx < sigma_alias_tables_.size();
-         sigma_idx++) {
+  double cdf(double x) {
+    double sgn = (x > 0) ? 1 : -1;
+    if (std::fpclassify(x) == FP_ZERO) {
+      sgn = 0;
+    }
+
+    return 0.5 * (sgn * (1 - std::exp(-std::abs(x))) + 1);
+  }
+
+  void CreateLaplaceAliasTables() {
+    for (uint32_t sig = 0; sig < sigma_alias_tables_.size(); sig++) {
       const uint32_t MAX_SYMBOL = 256u;
-      const double sigma = static_cast<double>(sigma_idx) * sigma_q;
+      const double sigma = 0.125 + 0.25 * sig;
+      std::vector<int> distribution(MAX_SYMBOL);
 
-      std::array<uint32_t, MAX_SYMBOL + 1> cdf;
-      cdf[0] = 0u;
-      cdf[MAX_SYMBOL] = ANS_TAB_SIZE - MAX_SYMBOL;
-      for (uint32_t i = 1u; i < MAX_SYMBOL; i++) {
-        double v = (static_cast<double>(static_cast<int>(i) -
-                                        static_cast<int>(MAX_SYMBOL / 2)) -
-                    0.5) *
-                   q;
-        double cdf_d =
-            (v <= 0.0) ? (0.5 * exp(v / sigma)) : (1.0 - 0.5 * exp(-v / sigma));
-        cdf[i] = static_cast<uint32_t>(
-            cdf_d * static_cast<double>(ANS_TAB_SIZE - MAX_SYMBOL));
+      for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
+        double v = static_cast<double>(i);
+
+        if (i == 0) {
+          distribution[i] = ANS_TAB_SIZE * cdf((v + 0.5) / sig);
+        } else if (i == MAX_SYMBOL - 1) {
+          distribution[i] = ANS_TAB_SIZE * (1 - cdf((v - 0.5) / sig));
+        } else {
+          distribution[i] = ANS_TAB_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma));
+        }
+        distribution[i]++;
       }
 
-      std::vector<int> counts;
-      counts.resize(MAX_SYMBOL);
-      for (uint32_t i = 0u; i < MAX_SYMBOL; i++) {
-        counts[i] = static_cast<int>(1u + cdf[i + 1] - cdf[i]);
-      }
-
-      InitAliasTable(counts, ANS_TAB_SIZE, 8u,
-                     sigma_alias_tables_[sigma_idx].data());
+      InitAliasTable(distribution, ANS_TAB_SIZE, 8u,
+                     sigma_alias_tables_[sig].data());
     }
   }
 
   ////////////////////////////////////////////////////////////////////////////////
 
  private:
-  std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 16>
+  std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 32>
       sigma_alias_tables_ = {};  // not owned
  private:
   const AliasTable::Entry* JXL_RESTRICT alias_tables_;  // not owned
