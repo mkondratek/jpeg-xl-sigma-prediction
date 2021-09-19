@@ -1608,7 +1608,7 @@ size_t WriteTokens(const std::vector<Token>& tokens,
 template <uint32_t SIGMA_COUNT = 32u, uint32_t MAX_SYMBOL = 256u>
 class ANSLaplaceTable {
  public:
-  ANSLaplaceTable(uint32_t low, uint32_t high) : builder(SIGMA_COUNT) { CreateTables(low, high); }
+  ANSLaplaceTable(uint32_t low, uint32_t high) { CreateTables(low, high); }
 
   ANSEncSymbolInfo const& get_symbol(uint32_t value, uint32_t sigma) const {
     return m_data[sigma % SIGMA_COUNT][value % MAX_SYMBOL];
@@ -1623,9 +1623,7 @@ class ANSLaplaceTable {
     return m_data;
   }
 
-  EntropyEncodingData codes;
  private:
-  HistogramBuilder builder;
   std::array<std::array<ANSHistBin, MAX_SYMBOL>, SIGMA_COUNT> distribution;
   std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
 
@@ -1638,8 +1636,6 @@ class ANSLaplaceTable {
           distribution[sig].data(), MAX_SYMBOL, 8, false, m_data[sig].data(),
           nullptr);
     }
-    std::vector<u_int8_t> context_map;
-    builder.BuildAndStoreEntropyCodes({}, {}, &codes, &context_map, true, nullptr, kLayerACTokens, nullptr);
   }
 
   double cdf(double x) {
@@ -1653,11 +1649,8 @@ class ANSLaplaceTable {
 
   void CalculateDistribution(uint32_t sig) {
     double sigma = 0.125 + 0.25 * sig;
-
     for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
       double v = static_cast<double>(i);
-//      double v = static_cast<double>(static_cast<int>(i) -
-//                                     static_cast<int>(MAX_SYMBOL / 2));
       if (i == 0) {
         distribution[sig][i] = ANS_TAB_SIZE * cdf((v + 0.5) / sig);
       } else if (i == MAX_SYMBOL - 1) {
@@ -1666,12 +1659,6 @@ class ANSLaplaceTable {
         distribution[sig][i] = ANS_TAB_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma));
       }
       distribution[sig][i]++;
-    }
-
-    for (int i = 0; i < MAX_SYMBOL; ++i) {
-      for (int j = 0; j < distribution[sig][i]; ++j) {
-        builder.VisitSymbol(i, sig);
-      }
     }
   }
 };
@@ -1711,23 +1698,19 @@ size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
 
   std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
-    if (tokens[i].sigma == uint32_t(-1)) tokens[i].sigma = 0;
-    while (tokens[i].sigma >= laplace.data().size() && tokens[i].sigma != uint32_t(-1)) {
-      std::cout << "flush value " << (tokens[i].value & 1) << " because of sigma " << " " << tokens[i].sigma << std::endl;
-      tokens[i].sigma >>= 1;
-      writer->Write(1, tokens[i].value & 1);
-      tokens[i].value >>= 1;
+    Token& token = tokens[i];
+    if (token.sigma == uint32_t(-1)) token.sigma = 0;
+    while (token.sigma >= laplace.data().size() && token.sigma != uint32_t(-1)) {
+      std::cout << "flush value " << (token.value & 1) << " because of sigma " << " " << token.sigma << std::endl;
+      token.sigma >>= 1;
+      writer->Write(1, token.value & 1);
+      token.value >>= 1;
     }
 
-    const Token token = tokens[i];
-    const uint32_t histo = tokens[i].sigma;
-//    uint32_t nbits, bits;
+    const uint32_t histo = token.sigma;
     const ANSEncSymbolInfo& info = laplace.data()[histo][0];
-    // Extra bits first as this is reversed.
-//    addbits(bits, nbits);
-//    num_extra_bits += nbits;
     uint8_t ans_nbits = 0;
-    std::cout << "Pre - (val:" << tokens[i].value << ", sigma:" << tokens[i].sigma << ")";
+    std::cout << "Pre - (val:" << token.value << ", sigma:" << token.sigma << ")";
     uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
     std::cout << " - Post!" << std::endl;
     addbits(ans_bits, ans_nbits);
