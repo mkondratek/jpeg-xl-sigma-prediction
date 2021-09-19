@@ -53,7 +53,7 @@ class GetBlock {
   virtual void StartRow(size_t by) = 0;
   virtual Status LoadBlock(size_t bx, size_t by, const AcStrategy& acs,
                            size_t size, size_t log2_covered_blocks,
-                           ACPtr block[3], ACType ac_type) = 0;
+                           ACPtr block[3], ACType ac_type, float* sigmas) = 0;
   virtual ~GetBlock() {}
 };
 
@@ -351,8 +351,63 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
             }
           }
         }
+
+        float sigma[3 * 64];
+        for (size_t c : {1, 0, 2}) {
+          float dct1ds_in[16];
+          float* left_col_t = dct1ds_in;
+          float* top_row_t = dct1ds_in + 8;
+
+          float dct1ds[16];
+          float* left_col = dct1ds;
+          float* top_row = dct1ds + 8;
+
+          if (bx != 0 && by != 0) {
+            if (ac_type == ACType::k16) {
+              auto left_neighbour_block =
+                  bx > 0 ? qblock[c].ptr16 - 3 * size : nullptr;
+              auto top_neighbour_block =
+                  by > 0 ? group_dec_cache->prev_dec_group_qrow16 +
+                               (3 * offsett) + (c * 64)
+                         : nullptr;
+              auto block = qblock[c].ptr16;
+
+              for (int i = 0; i < 8; ++i) {
+                left_col_t[i] = left_neighbour_block[i * 8];
+                top_row_t[i] = top_neighbour_block[i];
+              }
+
+            } else {
+              auto left_neighbour_block =
+                  bx > 0 ? qblock[c].ptr32 - 3 * size : nullptr;
+              auto top_neighbour_block =
+                  by > 0 ? group_dec_cache->prev_dec_group_qrow +
+                               (3 * offsett) + (c * 64)
+                         : nullptr;
+              auto block = qblock[c].ptr32;
+
+              if (bx != 0 && by != 0) {
+                for (int i = 0; i < 8; ++i) {
+                  left_col_t[i] = left_neighbour_block[i * 8];
+                  top_row_t[i] = top_neighbour_block[i];
+                }
+              }
+            }
+
+            sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
+            sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
+            sigma_prediction::derive_sigmas(dct1ds, sigma);
+          } else {
+            for (int i = 0; i < 8; ++i) {
+              for (int j = 0; j < 8; ++j) {
+                sigma[64 * c + 8 * i + j] = 0;
+              }
+            }
+          }
+        }
+
         JXL_RETURN_IF_ERROR(get_block->LoadBlock(
-            bx, by, acs, size, log2_covered_blocks, qblock, ac_type));
+            bx, by, acs, size, log2_covered_blocks, qblock, ac_type, sigma));
         offset += size;
         if (draw == kDontDraw) {
           bx += llf_x;
@@ -382,58 +437,6 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
             // No CfL - no need to store the y block converted to integers.
             if (!cs.Is444() ||
                 (row_cmap[0][abs_tx] == 0 && row_cmap[2][abs_tx] == 0)) {
-
-              float sigma[64];
-
-              float dct1ds_in[16];
-              float* left_col_t = dct1ds_in;
-              float* top_row_t = dct1ds_in + 8;
-
-              float dct1ds[16];
-              float* left_col = dct1ds;
-              float* top_row = dct1ds + 8;
-
-              if ( bx != 0 && by != 0) {
-                if (ac_type == ACType::k16) {
-                  auto left_neighbour_block = bx > 0 ? qblock[c].ptr16 - 3 * size : nullptr;
-                  auto top_neighbour_block = by > 0
-                                ? group_dec_cache->prev_dec_group_qrow16 +
-                                  (3 * offsett) + (c * 64) : nullptr;
-                  auto block = qblock[c].ptr16;
-
-                    for (int i = 0; i < 8; ++i) {
-                      left_col_t[i] = left_neighbour_block[i * 8];
-                      top_row_t[i] = top_neighbour_block[i];
-                    }
-
-                } else {
-                  auto left_neighbour_block =
-                      bx > 0 ? qblock[c].ptr32 - 3 * size : nullptr;
-                  auto top_neighbour_block =
-                      by > 0 ? group_dec_cache->prev_dec_group_qrow +
-                                   (3 * offsett) + (c * 64)
-                             : nullptr;
-                  auto block = qblock[c].ptr32;
-
-                  if (bx != 0 && by != 0) {
-                    for (int i = 0; i < 8; ++i) {
-                      left_col_t[i] = left_neighbour_block[i * 8];
-                      top_row_t[i] = top_neighbour_block[i];
-                    }
-                  }
-                }
-
-              sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
-              sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
-              sigma_prediction::derive_sigmas(dct1ds, sigma);
-              } else {
-                for (int i = 0; i < 8; ++i) {
-                  for (int j = 0; j < 8; ++j) {
-                    sigma[8 * i + j] = 0;
-                  }
-                }
-              }
-
               for (size_t i = 0; i < 64; i += Lanes(d)) {
                 const auto ini = Load(di, transposed_dct + i);
                 const auto ini16 = DemoteTo(di16, ini);
@@ -532,7 +535,8 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
                         const std::vector<uint8_t>& context_map,
                         const uint8_t* qdc_row, const int32_t* qf_row,
                         const BlockCtxMap& block_ctx_map, ACPtr block,
-                        size_t shift = 0) {
+                        size_t shift = 0,
+                        float* sigmas = nullptr) {
   // TODO (thomoncik): take sigmas into account when decoding block
   PROFILER_FUNC;
   // Equal to number of LLF coefficients.
@@ -565,10 +569,16 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
     PROFILER_ZONE("AcDecSkipLLF, reader");
     size_t prev = (nzeros > size / 16 ? 0 : 1);
 
-    std::vector<uint32_t> sigmas;
-    decoder->LoadSigmas(nzeros, sigmas, br);
+    const size_t histo_offset =
+        ctx_offset + block_ctx_map.ZeroDensityContextsOffset(block_ctx);
 
     for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
+
+      const size_t ctx =
+          histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
+                                            log2_covered_blocks, prev);
+      const size_t u_coeff_2 = decoder->ReadHybridUint(ctx, br, context_map);
+
       const size_t u_coeff = decoder->ReadSymbolSigma(sigmas[k], br);
       // Hand-rolled version of UnpackSigned, shifting before the conversion to
       // signed integer to avoid undefined behavior of shifting negative
@@ -616,7 +626,7 @@ struct GetBlockFromBitstream : public GetBlock {
 
   Status LoadBlock(size_t bx, size_t by, const AcStrategy& acs, size_t size,
                    size_t log2_covered_blocks, ACPtr block[3],
-                   ACType ac_type) override {
+                   ACType ac_type, float* sigmas) override {
     auto decode_ac_varblock = ac_type == ACType::k16
                                   ? DecodeACVarBlock<ACType::k16>
                                   : DecodeACVarBlock<ACType::k32>;
@@ -633,7 +643,7 @@ struct GetBlockFromBitstream : public GetBlock {
             row_nzeros_top[pass][c], nzeros_stride, c, sbx, sby, bx, acs,
             &coeff_orders[pass * coeff_order_size], readers[pass],
             &decoders[pass], context_map[pass], quant_dc_row, qf_row,
-            *block_ctx_map, block[c], shift_for_pass[pass]));
+            *block_ctx_map, block[c], shift_for_pass[pass], sigmas + (c * 64)));
       }
     }
     return true;
@@ -710,7 +720,7 @@ struct GetBlockFromEncoder : public GetBlock {
 
   Status LoadBlock(size_t bx, size_t by, const AcStrategy& acs, size_t size,
                    size_t log2_covered_blocks, ACPtr block[3],
-                   ACType ac_type) override {
+                   ACType ac_type, float* sigmas) override {
     JXL_DASSERT(ac_type == ACType::k32);
     for (size_t c = 0; c < 3; c++) {
       // for each pass

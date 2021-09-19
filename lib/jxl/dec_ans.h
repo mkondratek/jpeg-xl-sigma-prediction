@@ -437,16 +437,6 @@ class ANSSymbolReader {
 
   ///////////////////////////// LAPLACE - ALIAS TABLES - SIGMA LOAD //////////
 
-  void LoadSigmas(size_t token_count, std::vector<uint32_t>& sigmas,
-                  BitReader* JXL_RESTRICT br) {
-    sigmas.resize(token_count);
-    for (size_t i = 0u; i < token_count; i++) {
-      const uint32_t sigma = static_cast<uint32_t>(br->PeekBits(4u));
-      br->Consume(4u);
-      sigmas[i] = sigma;
-    }
-  }
-
  private:
   double cdf(double x) {
     double sgn = (x > 0) ? 1 : -1;
