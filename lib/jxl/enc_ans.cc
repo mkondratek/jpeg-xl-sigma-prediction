@@ -1697,8 +1697,7 @@ size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
   std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
     Token token = tokens[i];
-    if (token.sigma == uint32_t(-1)) token.sigma = 0;
-    while (token.sigma >= laplace.data().size() && token.sigma != uint32_t(-1)) {
+    while (token.sigma >= laplace.data().size()) {
       std::cout << "flush value " << (token.value & 1) << " because of sigma " << " " << token.sigma << std::endl;
       token.sigma >>= 1;
       writer->Write(1, token.value & 1);
