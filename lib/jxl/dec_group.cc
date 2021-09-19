@@ -370,7 +370,6 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
                   by > 0 ? group_dec_cache->prev_dec_group_qrow16 +
                                (3 * offsett) + (c * 64)
                          : nullptr;
-              auto block = qblock[c].ptr16;
 
               for (int i = 0; i < 8; ++i) {
                 left_col_t[i] = left_neighbour_block[i * 8];
@@ -384,7 +383,6 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
                   by > 0 ? group_dec_cache->prev_dec_group_qrow +
                                (3 * offsett) + (c * 64)
                          : nullptr;
-              auto block = qblock[c].ptr32;
 
               if (bx != 0 && by != 0) {
                 for (int i = 0; i < 8; ++i) {
