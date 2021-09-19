@@ -226,7 +226,7 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
         sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
         sigma_prediction::derive_sigmas(dct1ds, sigma);
-        } else{
+        } else {
           for (int i = 0; i < 8; ++i) {
             for (int j = 0; j < 8; ++j) {
               sigma[8 * i + j] = 0;
@@ -261,7 +261,11 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
           int32_t coeff = block[order[k]];
           size_t ctx = histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
                                             log2_covered_blocks, prev);
-          uint32_t sigma_quant = static_cast<uint32_t>(std::floor(sigma[order[k]] / 4));
+          uint32_t sigma_quant = static_cast<uint32_t>(std::floor(sigma[order[k]] * 4));
+          if (order[k] >= 64) {
+            sigma_quant = 15;
+          }
+//          JXL_ASSERT(order[k] < 64);
           uint32_t u_coeff = PackSigned(coeff);
           output->emplace_back(ctx, u_coeff, sigma_quant);
           prev = coeff != 0;

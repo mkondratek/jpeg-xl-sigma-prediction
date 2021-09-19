@@ -1668,9 +1668,7 @@ class ANSLaplaceTable {
 
 /////////////// AC CODING WITH LAPLACE SIGMAS //////////////////////////////////
 
-size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
-  std::vector<Token> tokens(tokens_org);
-
+size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
   size_t num_extra_bits = 0;
 
   std::vector<uint64_t> out;
@@ -1698,7 +1696,7 @@ size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
 
   std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
-    Token& token = tokens[i];
+    Token token = tokens[i];
     if (token.sigma == uint32_t(-1)) token.sigma = 0;
     while (token.sigma >= laplace.data().size() && token.sigma != uint32_t(-1)) {
       std::cout << "flush value " << (token.value & 1) << " because of sigma " << " " << token.sigma << std::endl;
@@ -1707,8 +1705,7 @@ size_t WriteACTokens(const std::vector<Token>& tokens_org, BitWriter* writer) {
       token.value >>= 1;
     }
 
-    const uint32_t histo = token.sigma;
-    const ANSEncSymbolInfo& info = laplace.data()[histo][0];
+    const ANSEncSymbolInfo& info = laplace.get_symbol(token);
     uint8_t ans_nbits = 0;
     std::cout << "Pre - (val:" << token.value << ", sigma:" << token.sigma << ")";
     uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
