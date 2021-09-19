@@ -372,4 +372,7 @@ Status DecodeHistograms(BitReader* br, size_t num_contexts, ANSCode* code,
   return true;
 }
 
+std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 32>
+    ANSSymbolReader::sigma_alias_tables_ = {};  // not owned
+
 }  // namespace jxl

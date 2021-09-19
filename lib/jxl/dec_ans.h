@@ -608,9 +608,9 @@ class ANSSymbolReader {
   ////////////////////////////////////////////////////////////////////////////////
 
  private:
-  std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 32>
-      sigma_alias_tables_ = {};  // not owned
- private:
+  static std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 32>
+      sigma_alias_tables_;  // not owned
+
   const AliasTable::Entry* JXL_RESTRICT alias_tables_;  // not owned
   const HuffmanDecodingData* huffman_data_;
   bool use_prefix_code_;
