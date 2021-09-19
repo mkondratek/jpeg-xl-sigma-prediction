@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <iostream>
 
+#include "ac_sigma_prediction.h"
 #include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/aux_out.h"
@@ -381,6 +382,58 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
             // No CfL - no need to store the y block converted to integers.
             if (!cs.Is444() ||
                 (row_cmap[0][abs_tx] == 0 && row_cmap[2][abs_tx] == 0)) {
+
+              float sigma[64];
+
+              float dct1ds_in[16];
+              float* left_col_t = dct1ds_in;
+              float* top_row_t = dct1ds_in + 8;
+
+              float dct1ds[16];
+              float* left_col = dct1ds;
+              float* top_row = dct1ds + 8;
+
+              if ( bx != 0 && by != 0) {
+                if (ac_type == ACType::k16) {
+                  auto left_neighbour_block = bx > 0 ? qblock[c].ptr16 - 3 * size : nullptr;
+                  auto top_neighbour_block = by > 0
+                                ? group_dec_cache->prev_dec_group_qrow16 +
+                                  (3 * offsett) + (c * 64) : nullptr;
+                  auto block = qblock[c].ptr16;
+
+                    for (int i = 0; i < 8; ++i) {
+                      left_col_t[i] = left_neighbour_block[i * 8];
+                      top_row_t[i] = top_neighbour_block[i];
+                    }
+
+                } else {
+                  auto left_neighbour_block =
+                      bx > 0 ? qblock[c].ptr32 - 3 * size : nullptr;
+                  auto top_neighbour_block =
+                      by > 0 ? group_dec_cache->prev_dec_group_qrow +
+                                   (3 * offsett) + (c * 64)
+                             : nullptr;
+                  auto block = qblock[c].ptr32;
+
+                  if (bx != 0 && by != 0) {
+                    for (int i = 0; i < 8; ++i) {
+                      left_col_t[i] = left_neighbour_block[i * 8];
+                      top_row_t[i] = top_neighbour_block[i];
+                    }
+                  }
+                }
+
+              sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
+              sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
+              sigma_prediction::derive_sigmas(dct1ds, sigma);
+              } else {
+                for (int i = 0; i < 8; ++i) {
+                  for (int j = 0; j < 8; ++j) {
+                    sigma[8 * i + j] = 0;
+                  }
+                }
+              }
+
               for (size_t i = 0; i < 64; i += Lanes(d)) {
                 const auto ini = Load(di, transposed_dct + i);
                 const auto ini16 = DemoteTo(di16, ini);

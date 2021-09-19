@@ -208,6 +208,8 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * (((by - 1) * (cx + 1)) + bx));
         const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * ((by * (cx + 1)) + (bx - 1)));
         float sigma[64];
+
+        if (bx != 0 && by != 0) {
         float dct1ds_in[16];
         float* left_col_t = dct1ds_in;
         float* top_row_t = dct1ds_in + 8;
@@ -217,18 +219,20 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         float* top_row = dct1ds + 8;
 
         for (int i = 0; i < 8; ++i) {
-          if (bx != 0 && by != 0) {
-            left_col_t[i] = left_neighbour_block[i * 8];
-            top_row_t[i] = top_neighbour_block[i];
-          } else {
-            left_col_t[i] = block[i * 8];
-            top_row_t[i] = block[i];
-          }
+          left_col_t[i] = left_neighbour_block[i * 8];
+          top_row_t[i] = top_neighbour_block[i];
         }
 
         sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
         sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
         sigma_prediction::derive_sigmas(dct1ds, sigma);
+        } else{
+          for (int i = 0; i < 8; ++i) {
+            for (int j = 0; j < 8; ++j) {
+              sigma[8 * i + j] = 0;
+            }
+          }
+        }
 
         int32_t nzeros =
             (covered_blocks == 1)
