@@ -11,6 +11,7 @@
 
 #include <array>
 #include <math.h>
+#include <cmath>
 #include <stddef.h>
 #include <stdint.h>
 
