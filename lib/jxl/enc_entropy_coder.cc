@@ -208,8 +208,10 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
 
         // TODO (thomoncik): migrate to image.h functions of operating on cropped image
         const int32_t* JXL_RESTRICT block = ac_rows[c] + offset[c];
-        const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * (((by - 1) * (cx + 1)) + bx));
-        const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * ((by * (cx + 1)) + (bx - 1)));
+        size_t top_block_idx = ((by - 1) * xsize_blocks) + bx;
+        size_t left_block_idx = (by * xsize_blocks) + (bx - 1);
+        const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * top_block_idx);
+        const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * left_block_idx);
         float sigma[64];
 
         if (bx != 0 && by != 0) {
