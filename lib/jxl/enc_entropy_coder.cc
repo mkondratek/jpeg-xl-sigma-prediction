@@ -143,6 +143,7 @@ int32_t NumNonZero8x8ExceptDC(const int32_t* JXL_RESTRICT block,
 
   return nzeros;
 }
+
 // The number of nonzeros of each block is predicted from the top and the left
 // blocks, with opportune scaling to take into account the number of blocks of
 // each strategy.  The predicted number of nonzeros divided by two is used as a
@@ -195,7 +196,9 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
       const size_t log2_covered_blocks =
           Num0BitsBelowLS1Bit_Nonzero(covered_blocks);
       const size_t size = covered_blocks * kDCTBlockSize;
-      // TODO (thomoncik): predict sigma for each of covered blocks
+      // TODO (thomoncik):
+      //  predict sigma for each of covered blocks
+      //  to handle non 8x8 block as well
 
       CoefficientLayout(&cy, &cx);  // swap cx/cy to canonical order
 
@@ -210,22 +213,22 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         float sigma[64];
 
         if (bx != 0 && by != 0) {
-        float dct1ds_in[16];
-        float* left_col_t = dct1ds_in;
-        float* top_row_t = dct1ds_in + 8;
+          float dct1ds_in[16];
+          float* left_col_t = dct1ds_in;
+          float* top_row_t = dct1ds_in + 8;
 
-        float dct1ds[16];
-        float* left_col = dct1ds;
-        float* top_row = dct1ds + 8;
+          float dct1ds[16];
+          float* left_col = dct1ds;
+          float* top_row = dct1ds + 8;
 
-        for (int i = 0; i < 8; ++i) {
-          left_col_t[i] = left_neighbour_block[i * 8];
-          top_row_t[i] = top_neighbour_block[i];
-        }
+          for (int i = 0; i < 8; ++i) {
+            left_col_t[i] = left_neighbour_block[i * 8];
+            top_row_t[i] = top_neighbour_block[i];
+          }
 
-        sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
-        sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
-        sigma_prediction::derive_sigmas(dct1ds, sigma);
+          sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
+          sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
+          sigma_prediction::derive_sigmas(dct1ds, sigma);
         } else {
           for (int i = 0; i < 8; ++i) {
             for (int j = 0; j < 8; ++j) {

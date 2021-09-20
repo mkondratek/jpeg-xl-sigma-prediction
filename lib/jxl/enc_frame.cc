@@ -9,12 +9,14 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <limits>
 #include <numeric>
 #include <vector>
 
+#include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/ans_params.h"
 #include "lib/jxl/aux_out.h"
@@ -23,14 +25,18 @@
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/data_parallel.h"
 #include "lib/jxl/base/override.h"
+#include "lib/jxl/base/padded_bytes.h"
 #include "lib/jxl/base/profiler.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/chroma_from_luma.h"
+#include "lib/jxl/coeff_order.h"
 #include "lib/jxl/coeff_order_fwd.h"
 #include "lib/jxl/color_encoding_internal.h"
+#include "lib/jxl/color_management.h"
 #include "lib/jxl/common.h"
-#include "lib/jxl/dct-inl.h"
+#include "lib/jxl/compressed_dc.h"
 #include "lib/jxl/dct_util.h"
+#include "lib/jxl/enc_adaptive_quantization.h"
 #include "lib/jxl/enc_ans.h"
 #include "lib/jxl/enc_bit_writer.h"
 #include "lib/jxl/enc_cache.h"
@@ -49,12 +55,14 @@
 #include "lib/jxl/enc_xyb.h"
 #include "lib/jxl/fields.h"
 #include "lib/jxl/frame_header.h"
+#include "lib/jxl/gaborish.h"
 #include "lib/jxl/image.h"
 #include "lib/jxl/image_bundle.h"
 #include "lib/jxl/image_ops.h"
 #include "lib/jxl/loop_filter.h"
 #include "lib/jxl/quant_weights.h"
 #include "lib/jxl/quantizer.h"
+#include "lib/jxl/splines.h"
 #include "lib/jxl/toc.h"
 
 namespace jxl {
@@ -1184,7 +1192,6 @@ Status EncodeFrame(const CompressParams& cparams_orig,
         &ib, &opsin, pool, modular_frame_encoder.get(), writer,
         frame_header.get()));
   }
-
   if (cparams.ec_resampling != 1 && !cparams.already_downsampled) {
     extra_channels = &extra_channels_storage;
     for (size_t i = 0; i < ib.extra_channels().size(); i++) {

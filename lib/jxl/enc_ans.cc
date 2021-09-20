@@ -1694,11 +1694,9 @@ size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
   static auto laplace = ANSLaplaceTable<32u, 256u>(0, 32);
   ANSCoder ans;
 
-  std::cout << "tokens: " << end << '\n';
   for (int i = end - 1; i >= 0; --i) {
     Token token = tokens[i];
     while (token.sigma >= laplace.data().size()) {
-      std::cout << "flush value " << (token.value & 1) << " because of sigma " << " " << token.sigma << std::endl;
       token.sigma >>= 1;
       writer->Write(1, token.value & 1);
       token.value >>= 1;
@@ -1706,9 +1704,7 @@ size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
 
     const ANSEncSymbolInfo& info = laplace.get_symbol(token);
     uint8_t ans_nbits = 0;
-    std::cout << "Pre - (val:" << token.value << ", sigma:" << token.sigma << ")";
     uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
-    std::cout << " - Post!" << std::endl;
     addbits(ans_bits, ans_nbits);
   }
   const uint32_t state = ans.GetState();

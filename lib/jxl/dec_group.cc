@@ -535,7 +535,6 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
                         const BlockCtxMap& block_ctx_map, ACPtr block,
                         size_t shift = 0,
                         float* sigmas = nullptr) {
-  // TODO (thomoncik): take sigmas into account when decoding block
   PROFILER_FUNC;
   // Equal to number of LLF coefficients.
   const size_t covered_blocks = 1 << log2_covered_blocks;

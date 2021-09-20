@@ -140,7 +140,6 @@ extern template void EncodeUintConfigs(const std::vector<HybridUintConfig>&,
 // Globally set the option to create fuzzer-friendly ANS streams. Negatively
 // impacts compression. Not thread-safe.
 void SetANSFuzzerFriendly(bool ans_fuzzer_friendly);
-
 }  // namespace jxl
 
 #endif  // LIB_JXL_ENC_ANS_H_
