@@ -19,6 +19,7 @@
 
 #include "ac_sigma_prediction.h"
 #include "dct-inl.h"
+#include "dec_transforms-inl.h"
 #include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/base/bits.h"
@@ -210,11 +211,35 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
         const int32_t* JXL_RESTRICT block = ac_rows[c] + offset[c];
         size_t top_block_idx = ((by - 1) * xsize_blocks) + bx;
         size_t left_block_idx = (by * xsize_blocks) + (bx - 1);
-        const int32_t* JXL_RESTRICT top_neighbour_block = ac_rows[c] + (size * top_block_idx);
-        const int32_t* JXL_RESTRICT left_neighbour_block = ac_rows[c] + (size * left_block_idx);
+        // convert DCT block to pixel values here
+        // then assign neighbouring 8x8 pixel blocks to variables top_neighbour_block and left_neighbour_block
+        int32_t const* JXL_RESTRICT top_neighbour_coefficients = ac_rows[c] + (size * top_block_idx);
+        int32_t const* JXL_RESTRICT left_neighbour_coefficients = ac_rows[c] + (size * left_block_idx);
+
+        float* JXL_RESTRICT top_neighbour_block = new float[kDCTBlockSize]; // delete it later
+        float* JXL_RESTRICT left_neighbour_block = new float[kDCTBlockSize]; // delete it later
+        float* JXL_RESTRICT top_neighbour_coefficients_f = new float[kDCTBlockSize]; // delete it later
+        float* JXL_RESTRICT left_neighbour_coefficients_f = new float[kDCTBlockSize]; // delete it later
+        for (size_t i = 0; i < kDCTBlockSize; ++i) {
+          top_neighbour_coefficients_f[i] = 1.0f * top_neighbour_coefficients[i];
+          left_neighbour_coefficients_f[i] = 1.0f * left_neighbour_coefficients[i];
+        }
+
+        float* scratch_space = new float[kDCTBlockSize * kDCTBlockSize]; // not sure what that does
+
         float sigma[64];
 
         if (bx != 0 && by != 0) {
+          TransformToPixels(AcStrategy::DCT, left_neighbour_coefficients_f, left_neighbour_block, kBlockDim, scratch_space);
+          TransformToPixels(AcStrategy::DCT, top_neighbour_coefficients_f, top_neighbour_block, kBlockDim, scratch_space);
+
+          // JPEG DC is from -1024 to 1023
+          // should I scale it linearly?
+          for (size_t i = 0; i < kDCTBlockSize; ++i) {
+            left_neighbour_block[i] = (left_neighbour_block[i] + 1024) / (1023 + 1024);
+            top_neighbour_block[i] = (top_neighbour_block[i] + 1024) / (1023 + 1024);
+          }
+
           float dct1ds_in[16];
           float* left_col_t = dct1ds_in;
           float* top_row_t = dct1ds_in + 8;
@@ -267,7 +292,7 @@ void TokenizeCoefficients(const coeff_order_t* JXL_RESTRICT orders,
           size_t ctx = histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
                                             log2_covered_blocks, prev);
           uint32_t sigma_quant = static_cast<uint32_t>(std::floor(sigma[order[k]] * 4));
-          JXL_ASSERT(order[k] < 64);
+          // JXL_ASSERT(order[k] < 64);
           uint32_t u_coeff = PackSigned(coeff);
           output->emplace_back(ctx, u_coeff, sigma_quant);
           prev = coeff != 0;
