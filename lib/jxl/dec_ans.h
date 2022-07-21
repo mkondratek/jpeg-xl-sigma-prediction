@@ -9,6 +9,9 @@
 // Library to decode the ANS population counts from the bit-stream and build a
 // decoding table from them.
 
+#include <array>
+#include <math.h>
+#include <cmath>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -184,7 +187,50 @@ class ANSSymbolReader {
       if (dist < 1) dist = 1;
       special_distances_[i] = dist;
     }
+    CreateLaplaceAliasTables();
   }
+
+  /////////////////////////////// LAPLACE ATTEMPT ///////////////////////
+
+  JXL_INLINE size_t ReadSymbolSigmaWithoutRefill(const uint32_t sig,
+                                                 BitReader* JXL_RESTRICT br) {
+    const uint32_t res = state_ & (ANS_TAB_SIZE - 1u);
+
+    size_t log_alpha_size = 8;
+    size_t log_entry_size = ANS_LOG_TAB_SIZE - log_alpha_size;
+    size_t entry_size_minus_1 = (1 << log_entry_size) - 1;
+
+    auto const& table = sigma_alias_tables_[sig];
+    const AliasTable::Symbol symbol = AliasTable::Lookup(
+        table.data(), res, log_entry_size, entry_size_minus_1);
+    state_ = symbol.freq * (state_ >> ANS_LOG_TAB_SIZE) + symbol.offset;
+
+#if 1
+    // Branchless version is about equally fast on SKX.
+    const uint32_t new_state =
+        (state_ << 16u) | static_cast<uint32_t>(br->PeekFixedBits<16>());
+    const bool normalize = state_ < (1u << 16u);
+    state_ = normalize ? new_state : state_;
+    br->Consume(normalize ? 16 : 0);
+#else
+    if (JXL_UNLIKELY(state_ < (1u << 16u))) {
+      state_ = (state_ << 16u) | br->PeekFixedBits<16>();
+      br->Consume(16);
+    }
+#endif
+    const uint32_t next_res = state_ & (ANS_TAB_SIZE - 1u);
+    AliasTable::Prefetch(table.data(), next_res, log_entry_size_);
+
+    return symbol.value;
+  }
+
+  JXL_INLINE size_t ReadSymbolSigma(const size_t sigma_idx,
+                                    BitReader* JXL_RESTRICT br) {
+    br->Refill();
+    return ReadSymbolSigmaWithoutRefill(sigma_idx, br);
+  }
+
+  ///////////////////////////////////////////////////////////////////////
 
   JXL_INLINE size_t ReadSymbolANSWithoutRefill(const size_t histo_idx,
                                                BitReader* JXL_RESTRICT br) {
@@ -393,7 +439,173 @@ class ANSSymbolReader {
     }
   }
 
+  ///////////////////////////// LAPLACE - ALIAS TABLES - SIGMA LOAD //////////
+
  private:
+  double cdf(double x) {
+    double sgn = (x > 0) ? 1 : -1;
+    if (std::fpclassify(x) == FP_ZERO) {
+      sgn = 0;
+    }
+
+    return 0.5 * (sgn * (1 - std::exp(-std::abs(x))) + 1);
+  }
+
+  // Returns the difference between largest count that can be represented and is
+  // smaller than "count" and smallest representable count larger than "count".
+  static int SmallestIncrement(uint32_t count, uint32_t shift) {
+    int bits = count == 0 ? -1 : FloorLog2Nonzero(count);
+    int drop_bits = bits - GetPopulationCountPrecision(bits, shift);
+    return drop_bits < 0 ? 1 : (1 << drop_bits);
+  }
+
+  template <bool minimize_error_of_sum>
+  static bool RebalanceHistogram(const float* targets, int max_symbol, int table_size,
+                          uint32_t shift, int* omit_pos, int* counts) {
+    int sum = 0;
+    float sum_nonrounded = 0.0;
+    int remainder_pos = 0;  // if all of them are handled in first loop
+    int remainder_log = -1;
+    for (int n = 0; n < max_symbol; ++n) {
+      if (targets[n] > 0 && targets[n] < 1.0f) {
+        counts[n] = 1;
+        sum_nonrounded += targets[n];
+        sum += counts[n];
+      }
+    }
+    const float discount_ratio =
+        (table_size - sum) / (table_size - sum_nonrounded);
+    JXL_ASSERT(discount_ratio > 0);
+    JXL_ASSERT(discount_ratio <= 1.0f);
+    // Invariant for minimize_error_of_sum == true:
+    // abs(sum - sum_nonrounded)
+    //   <= SmallestIncrement(max(targets[])) + max_symbol
+    for (int n = 0; n < max_symbol; ++n) {
+      if (targets[n] >= 1.0f) {
+        sum_nonrounded += targets[n];
+        counts[n] =
+            static_cast<int>(targets[n] * discount_ratio);  // truncate
+        if (counts[n] == 0) counts[n] = 1;
+        if (counts[n] == table_size) counts[n] = table_size - 1;
+        // Round the count to the closest nonzero multiple of SmallestIncrement
+        // (when minimize_error_of_sum is false) or one of two closest so as to
+        // keep the sum as close as possible to sum_nonrounded.
+        int inc = SmallestIncrement(counts[n], shift);
+        counts[n] -= counts[n] & (inc - 1);
+        // TODO(robryk): Should we rescale targets[n]?
+        const float target =
+            minimize_error_of_sum ? (sum_nonrounded - sum) : targets[n];
+        if (counts[n] == 0 ||
+            (target > counts[n] + inc / 2 && counts[n] + inc < table_size)) {
+          counts[n] += inc;
+        }
+        sum += counts[n];
+        const int count_log = FloorLog2Nonzero(static_cast<uint32_t>(counts[n]));
+        if (count_log > remainder_log) {
+          remainder_pos = n;
+          remainder_log = count_log;
+        }
+      }
+    }
+    JXL_ASSERT(remainder_pos != -1);
+    // NOTE: This is the only place where counts could go negative. We could
+    // detect that, return false and make ANSHistBin uint32_t.
+    counts[remainder_pos] -= sum - table_size;
+    *omit_pos = remainder_pos;
+    return counts[remainder_pos] > 0;
+  }
+
+  static Status NormalizeCounts(int* counts, int* omit_pos, const int length,
+                         const int precision_bits, uint32_t shift,
+                         int* num_symbols, int* symbols) {
+    const int32_t table_size = 1 << precision_bits;  // target sum / table size
+    uint64_t total = 0;
+    int max_symbol = 0;
+    int symbol_count = 0;
+    for (int n = 0; n < length; ++n) {
+      total += counts[n];
+      if (counts[n] > 0) {
+        if (symbol_count < 4) {
+          symbols[symbol_count] = n;
+        }
+        ++symbol_count;
+        max_symbol = n + 1;
+      }
+    }
+    *num_symbols = symbol_count;
+    if (symbol_count == 0) {
+      return true;
+    }
+    if (symbol_count == 1) {
+      counts[symbols[0]] = table_size;
+      return true;
+    }
+    if (symbol_count > table_size)
+      return JXL_FAILURE("Too many entries in an ANS histogram");
+
+    const float norm = 1.f * table_size / total;
+    std::vector<float> targets(max_symbol);
+    for (size_t n = 0; n < targets.size(); ++n) {
+      targets[n] = norm * counts[n];
+    }
+    if (!RebalanceHistogram<false>(&targets[0], max_symbol, table_size, shift,
+                                   omit_pos, counts)) {
+      // Use an alternative rebalancing mechanism if the one above failed
+      // to create a histogram that is positive wherever the original one was.
+      if (!RebalanceHistogram<true>(&targets[0], max_symbol, table_size, shift,
+                                    omit_pos, counts)) {
+        return JXL_FAILURE("Logic error: couldn't rebalance a histogram");
+      }
+    }
+    return true;
+  }
+
+  void CreateLaplaceAliasTables() {
+    for (uint32_t sig = 0; sig < sigma_alias_tables_.size(); sig++) {
+      const uint32_t MAX_SYMBOL = 256u;
+      const double sigma = 0.125 + 0.25 * sig;
+      std::vector<int> distribution(MAX_SYMBOL);
+
+      for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
+        double v = static_cast<double>(i);
+
+        if (i == 0) {
+          distribution[i] = ANS_TAB_SIZE * cdf((v + 0.5) / sig);
+        } else if (i == MAX_SYMBOL - 1) {
+          distribution[i] = ANS_TAB_SIZE * (1 - cdf((v - 0.5) / sig));
+        } else {
+          distribution[i] = ANS_TAB_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma));
+        }
+        distribution[i]++;
+      }
+
+      std::vector<int> counts(distribution.begin(), distribution.begin() + MAX_SYMBOL);
+      if (!counts.empty()) {
+        size_t sum = 0;
+        for (size_t i = 0; i < counts.size(); i++) {
+          sum += counts[i];
+        }
+        if (sum == 0) {
+          counts[0] = ANS_TAB_SIZE;
+        }
+      }
+      int omit_pos = 0;
+      int num_symbols;
+      int symbols[4] = {}; // kMaxNumSymbolsForSmallCode
+      JXL_CHECK(NormalizeCounts(counts.data(), &omit_pos, MAX_SYMBOL,
+                                ANS_LOG_TAB_SIZE, 0, &num_symbols, symbols));
+
+      InitAliasTable(counts, ANS_TAB_SIZE, 8u,
+                     sigma_alias_tables_[sig].data());
+    }
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////
+
+ private:
+  static std::array<std::array<AliasTable::Entry, ANS_TAB_SIZE>, 32>
+      sigma_alias_tables_;  // not owned
+
   const AliasTable::Entry* JXL_RESTRICT alias_tables_;  // not owned
   const HuffmanDecodingData* huffman_data_;
   bool use_prefix_code_;

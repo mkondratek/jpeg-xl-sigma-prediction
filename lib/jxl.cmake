@@ -11,6 +11,8 @@
 #             only for encoding, should be listed here.
 set(JPEGXL_INTERNAL_SOURCES_DEC
   jxl/ac_context.h
+  jxl/ac_sigma_prediction.cc
+  jxl/ac_sigma_prediction.h
   jxl/ac_strategy.cc
   jxl/ac_strategy.h
   jxl/alpha.cc

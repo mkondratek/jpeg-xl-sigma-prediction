@@ -16,6 +16,8 @@
 #include <string.h>
 
 #include <algorithm>
+#include <iostream>
+#include <numeric>
 #include <vector>
 
 #include "lib/jxl/ans_common.h"
@@ -93,11 +95,12 @@ struct EntropyEncodingData {
 
 // Integer to be encoded by an entropy coder, either ANS or Huffman.
 struct Token {
-  Token(uint32_t c, uint32_t value)
-      : is_lz77_length(false), context(c), value(value) {}
+  Token(uint32_t c, uint32_t value, uint32_t sigma = -1)
+      : is_lz77_length(false), context(c), value(value), sigma(sigma) {}
   uint32_t is_lz77_length : 1;
   uint32_t context : 31;
   uint32_t value;
+  uint32_t sigma;
 };
 
 // Returns an estimate of the number of bits required to encode the given

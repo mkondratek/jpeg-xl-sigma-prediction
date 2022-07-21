@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <type_traits>
@@ -659,7 +660,7 @@ class HistogramBuilder {
       : histograms_(num_contexts) {}
 
   void VisitSymbol(int symbol, size_t histo_idx) {
-    JXL_DASSERT(histo_idx < histograms_.size());
+//    JXL_DASSERT(histo_idx < histograms_.size());
     histograms_[histo_idx].Add(symbol);
   }
 
@@ -1602,12 +1603,127 @@ size_t WriteTokens(const std::vector<Token>& tokens,
   return num_extra_bits;
 }
 
+////////////////////////////// ANS LAPLACE TABLES ////////////////////////////
+
+template <uint32_t SIGMA_COUNT = 32u, uint32_t MAX_SYMBOL = 256u>
+class ANSLaplaceTable {
+ public:
+  ANSLaplaceTable(uint32_t low, uint32_t high) { CreateTables(low, high); }
+
+  ANSEncSymbolInfo const& get_symbol(uint32_t value, uint32_t sigma) const {
+    return m_data[sigma % SIGMA_COUNT][value % MAX_SYMBOL];
+  }
+
+  ANSEncSymbolInfo const& get_symbol(Token const& t) const {
+    return get_symbol(t.value, t.sigma);
+  }
+
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> const&
+  data() const {
+    return m_data;
+  }
+
+ private:
+  std::array<std::array<ANSHistBin, MAX_SYMBOL>, SIGMA_COUNT> distribution;
+  std::array<std::array<ANSEncSymbolInfo, MAX_SYMBOL>, SIGMA_COUNT> m_data = {};
+
+  void CreateTables(uint32_t low, uint32_t high) {
+    JXL_ASSERT((high - low) == SIGMA_COUNT);
+    for (uint32_t sig = low; sig < high; sig++) {
+      CalculateDistribution(sig);
+      BuildAndStoreANSEncodingData(
+          HistogramParams::ANSHistogramStrategy::kApproximate,
+          distribution[sig].data(), MAX_SYMBOL, 8, false, m_data[sig].data(),
+          nullptr);
+    }
+  }
+
+  double cdf(double x) {
+    double sgn = (x > 0) ? 1 : -1;
+    if (std::fpclassify(x) == FP_ZERO) {
+      sgn = 0;
+    }
+
+    return 0.5 * (sgn * (1 - std::exp(-std::abs(x))) + 1);
+  }
+
+  void CalculateDistribution(uint32_t sig) {
+    double sigma = 0.125 + 0.25 * sig;
+    for (uint32_t i = 0; i < MAX_SYMBOL; i++) {
+      double v = static_cast<double>(i);
+      if (i == 0) {
+        distribution[sig][i] = ANS_TAB_SIZE * cdf((v + 0.5) / sig);
+      } else if (i == MAX_SYMBOL - 1) {
+        distribution[sig][i] = ANS_TAB_SIZE * (1 - cdf((v - 0.5) / sig));
+      } else {
+        distribution[sig][i] = ANS_TAB_SIZE * (cdf((v + 0.5) / sigma) - cdf((v - 0.5) / sigma));
+      }
+      distribution[sig][i]++;
+    }
+  }
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+
+/////////////// AC CODING WITH LAPLACE SIGMAS //////////////////////////////////
+
+size_t WriteACTokens(const std::vector<Token>& tokens, BitWriter* writer) {
+  size_t num_extra_bits = 0;
+
+  std::vector<uint64_t> out;
+  std::vector<uint8_t> out_nbits;
+  out.reserve(tokens.size());
+  out_nbits.reserve(tokens.size());
+  uint64_t allbits = 0;
+  size_t numallbits = 0;
+  // Writes in *reversed* order.
+  auto addbits = [&](size_t bits, size_t nbits) {
+    JXL_DASSERT(bits >> nbits == 0);
+    if (JXL_UNLIKELY(numallbits + nbits > BitWriter::kMaxBitsPerCall)) {
+      out.push_back(allbits);
+      out_nbits.push_back(numallbits);
+      numallbits = allbits = 0;
+    }
+    allbits <<= nbits;
+    allbits |= bits;
+    numallbits += nbits;
+  };
+  const int end = tokens.size();
+
+  static auto laplace = ANSLaplaceTable<32u, 256u>(0, 32);
+  ANSCoder ans;
+
+  for (int i = end - 1; i >= 0; --i) {
+    Token token = tokens[i];
+    while (token.sigma >= laplace.data().size()) {
+      token.sigma >>= 1;
+      writer->Write(1, token.value & 1);
+      token.value >>= 1;
+    }
+
+    const ANSEncSymbolInfo& info = laplace.get_symbol(token);
+    uint8_t ans_nbits = 0;
+    uint32_t ans_bits = ans.PutSymbol(info, &ans_nbits);
+    addbits(ans_bits, ans_nbits);
+  }
+  const uint32_t state = ans.GetState();
+  writer->Write(32, state);
+  writer->Write(numallbits, allbits);
+  for (int i = out.size(); i > 0; --i) {
+    writer->Write(out_nbits[i - 1], out[i - 1]);
+  }
+  return num_extra_bits;
+}
+
 void WriteTokens(const std::vector<Token>& tokens,
                  const EntropyEncodingData& codes,
                  const std::vector<uint8_t>& context_map, BitWriter* writer,
                  size_t layer, AuxOut* aux_out) {
   BitWriter::Allotment allotment(writer, 32 * tokens.size() + 32 * 1024 * 4);
-  size_t num_extra_bits = WriteTokens(tokens, codes, context_map, writer);
+  size_t num_extra_bits = (layer == kLayerACTokens)
+                              ? WriteACTokens(tokens, writer)
+                              : WriteTokens(tokens, codes, context_map, writer);
   ReclaimAndCharge(writer, &allotment, layer, aux_out);
   if (aux_out != nullptr) {
     aux_out->layers[layer].extra_bits += num_extra_bits;

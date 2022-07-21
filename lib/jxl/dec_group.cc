@@ -18,7 +18,10 @@
 #define HWY_TARGET_INCLUDE "lib/jxl/dec_group.cc"
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
+#include <iomanip>
+#include <iostream>
 
+#include "ac_sigma_prediction.h"
 #include "lib/jxl/ac_context.h"
 #include "lib/jxl/ac_strategy.h"
 #include "lib/jxl/aux_out.h"
@@ -50,7 +53,7 @@ class GetBlock {
   virtual void StartRow(size_t by) = 0;
   virtual Status LoadBlock(size_t bx, size_t by, const AcStrategy& acs,
                            size_t size, size_t log2_covered_blocks,
-                           ACPtr block[3], ACType ac_type) = 0;
+                           ACPtr block[3], ACType ac_type, float* sigmas) = 0;
   virtual ~GetBlock() {}
 };
 
@@ -251,9 +254,13 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
              block_rect.xsize() >> hshift[i], block_rect.ysize() >> vshift[i]);
   }
 
+  ACPtr qblock[3];
   for (size_t by = 0; by < ysize_blocks; ++by) {
     if (draw == kOnlyImageFeatures) break;
     get_block->StartRow(by);
+
+    size_t offsett = 0;
+
     size_t sby[3] = {by >> vshift[0], by >> vshift[1], by >> vshift[2]};
 
     const int32_t* JXL_RESTRICT row_quant =
@@ -331,21 +338,74 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
           // drawing.
           JXL_ASSERT(draw == kDraw);
           if (ac_type == ACType::k16) {
-            memset(group_dec_cache->dec_group_qblock16, 0,
+            memset(group_dec_cache->dec_group_qrow16 + (3 * offsett), 0,
                    size * 3 * sizeof(int16_t));
             for (size_t c = 0; c < 3; c++) {
-              qblock[c].ptr16 = group_dec_cache->dec_group_qblock16 + c * size;
+              qblock[c].ptr16 = group_dec_cache->dec_group_qrow16 + (3 * offsett) + c * size;
             }
           } else {
-            memset(group_dec_cache->dec_group_qblock, 0,
+            memset(group_dec_cache->dec_group_qrow + (3 * offsett), 0,
                    size * 3 * sizeof(int32_t));
             for (size_t c = 0; c < 3; c++) {
-              qblock[c].ptr32 = group_dec_cache->dec_group_qblock + c * size;
+              qblock[c].ptr32 = group_dec_cache->dec_group_qrow + (3 * offsett) + c * size;
             }
           }
         }
+
+        float sigma[3 * 64];
+        for (size_t c : {1, 0, 2}) {
+          float dct1ds_in[16];
+          float* left_col_t = dct1ds_in;
+          float* top_row_t = dct1ds_in + 8;
+
+          float dct1ds[16];
+          float* left_col = dct1ds;
+          float* top_row = dct1ds + 8;
+
+          if (bx != 0 && by != 0) {
+            if (ac_type == ACType::k16) {
+              auto left_neighbour_block =
+                  bx > 0 ? qblock[c].ptr16 - 3 * size : nullptr;
+              auto top_neighbour_block =
+                  by > 0 ? group_dec_cache->prev_dec_group_qrow16 +
+                               (3 * offsett) + (c * 64)
+                         : nullptr;
+
+              for (int i = 0; i < 8; ++i) {
+                left_col_t[i] = left_neighbour_block[i * 8];
+                top_row_t[i] = top_neighbour_block[i];
+              }
+
+            } else {
+              auto left_neighbour_block =
+                  bx > 0 ? qblock[c].ptr32 - 3 * size : nullptr;
+              auto top_neighbour_block =
+                  by > 0 ? group_dec_cache->prev_dec_group_qrow +
+                               (3 * offsett) + (c * 64)
+                         : nullptr;
+
+              if (bx != 0 && by != 0) {
+                for (int i = 0; i < 8; ++i) {
+                  left_col_t[i] = left_neighbour_block[i * 8];
+                  top_row_t[i] = top_neighbour_block[i];
+                }
+              }
+            }
+
+            sigma_prediction::DCT1D<8, 1>(left_col_t, left_col);
+            sigma_prediction::DCT1D<8, 1>(top_row_t, top_row);
+            sigma_prediction::derive_sigmas(dct1ds, sigma);
+          } else {
+            for (int i = 0; i < 8; ++i) {
+              for (int j = 0; j < 8; ++j) {
+                sigma[64 * c + 8 * i + j] = 0;
+              }
+            }
+          }
+        }
+
         JXL_RETURN_IF_ERROR(get_block->LoadBlock(
-            bx, by, acs, size, log2_covered_blocks, qblock, ac_type));
+            bx, by, acs, size, log2_covered_blocks, qblock, ac_type, sigma));
         offset += size;
         if (draw == kDontDraw) {
           bx += llf_x;
@@ -430,7 +490,14 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
           }
         }
         bx += llf_x;
+        offsett += size;
       }
+    }
+
+    if (ac_type == ACType::k16) {
+      std::swap(group_dec_cache->dec_group_qrow16, group_dec_cache->prev_dec_group_qrow16);
+    } else {
+      std::swap(group_dec_cache->dec_group_qrow, group_dec_cache->prev_dec_group_qrow);
     }
   }
   if (draw == kDontDraw) {
@@ -466,7 +533,8 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
                         const std::vector<uint8_t>& context_map,
                         const uint8_t* qdc_row, const int32_t* qf_row,
                         const BlockCtxMap& block_ctx_map, ACPtr block,
-                        size_t shift = 0) {
+                        size_t shift = 0,
+                        float* sigmas = nullptr) {
   PROFILER_FUNC;
   // Equal to number of LLF coefficients.
   const size_t covered_blocks = 1 << log2_covered_blocks;
@@ -493,18 +561,22 @@ Status DecodeACVarBlock(size_t ctx_offset, size_t log2_covered_blocks,
     }
   }
 
-  const size_t histo_offset =
-      ctx_offset + block_ctx_map.ZeroDensityContextsOffset(block_ctx);
-
   // Skip LLF
   {
     PROFILER_ZONE("AcDecSkipLLF, reader");
     size_t prev = (nzeros > size / 16 ? 0 : 1);
+
+    const size_t histo_offset =
+        ctx_offset + block_ctx_map.ZeroDensityContextsOffset(block_ctx);
+
     for (size_t k = covered_blocks; k < size && nzeros != 0; ++k) {
+
       const size_t ctx =
           histo_offset + ZeroDensityContext(nzeros, k, covered_blocks,
                                             log2_covered_blocks, prev);
-      const size_t u_coeff = decoder->ReadHybridUint(ctx, br, context_map);
+      const size_t u_coeff_2 = decoder->ReadHybridUint(ctx, br, context_map);
+
+      const size_t u_coeff = decoder->ReadSymbolSigma(std::floor(sigmas[k] * 4), br);
       // Hand-rolled version of UnpackSigned, shifting before the conversion to
       // signed integer to avoid undefined behavior of shifting negative
       // numbers.
@@ -551,7 +623,7 @@ struct GetBlockFromBitstream : public GetBlock {
 
   Status LoadBlock(size_t bx, size_t by, const AcStrategy& acs, size_t size,
                    size_t log2_covered_blocks, ACPtr block[3],
-                   ACType ac_type) override {
+                   ACType ac_type, float* sigmas) override {
     auto decode_ac_varblock = ac_type == ACType::k16
                                   ? DecodeACVarBlock<ACType::k16>
                                   : DecodeACVarBlock<ACType::k32>;
@@ -568,7 +640,7 @@ struct GetBlockFromBitstream : public GetBlock {
             row_nzeros_top[pass][c], nzeros_stride, c, sbx, sby, bx, acs,
             &coeff_orders[pass * coeff_order_size], readers[pass],
             &decoders[pass], context_map[pass], quant_dc_row, qf_row,
-            *block_ctx_map, block[c], shift_for_pass[pass]));
+            *block_ctx_map, block[c], shift_for_pass[pass], sigmas + (c * 64)));
       }
     }
     return true;
@@ -645,7 +717,7 @@ struct GetBlockFromEncoder : public GetBlock {
 
   Status LoadBlock(size_t bx, size_t by, const AcStrategy& acs, size_t size,
                    size_t log2_covered_blocks, ACPtr block[3],
-                   ACType ac_type) override {
+                   ACType ac_type, float* sigmas) override {
     JXL_DASSERT(ac_type == ACType::k32);
     for (size_t c = 0; c < 3; c++) {
       // for each pass
@@ -761,9 +833,11 @@ Status DecodeGroupForRoundtrip(const std::vector<std::unique_ptr<ACImage>>& ac,
 
   GetBlockFromEncoder get_block(ac, group_idx,
                                 dec_state->shared->frame_header.passes.shift);
+  const Rect& rect = dec_state->shared->BlockGroupRect(group_idx);
+  ACType ac_type = dec_state->coefficients->Type();
   group_dec_cache->InitOnce(
       /*num_passes=*/0,
-      /*used_acs=*/(1u << AcStrategy::kNumValidStrategies) - 1);
+      /*used_acs=*/(1u << AcStrategy::kNumValidStrategies) - 1, rect.xsize(), ac_type);
 
   return HWY_DYNAMIC_DISPATCH(DecodeGroupImpl)(&get_block, group_dec_cache,
                                                dec_state, thread, group_idx,

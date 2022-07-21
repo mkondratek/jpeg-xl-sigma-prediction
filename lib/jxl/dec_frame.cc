@@ -560,12 +560,16 @@ Status FrameDecoder::ProcessACGroup(size_t ac_group_id,
   const size_t y = gy * frame_dim_.group_dim;
 
   if (frame_header_.encoding == FrameEncoding::kVarDCT) {
+    const Rect& rect = dec_state_->shared->BlockGroupRect(ac_group_id);
+
+    ACType ac_type = dec_state_->coefficients->Type();
     group_dec_caches_[thread].InitOnce(frame_header_.passes.num_passes,
-                                       dec_state_->used_acs);
+                                       dec_state_->used_acs, rect.xsize(), ac_type);
     JXL_RETURN_IF_ERROR(DecodeGroup(
         br, num_passes, ac_group_id, dec_state_, &group_dec_caches_[thread],
         thread, decoded_, decoded_passes_per_ac_group_[ac_group_id], force_draw,
         dc_only));
+    group_dec_caches_[thread].DeInit(ac_type);
   }
 
   // don't limit to image dimensions here (is done in DecodeGroup)
